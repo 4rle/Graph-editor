@@ -1,0 +1,19 @@
+{
+  "name": "plot-graph-studio",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node server.js",
+    "start": "node server.js",
+    "test": "node --test --test-isolation=none tests/*.test.js",
+    "check": "node --check src/app.js && node --check src/chart.js && node --check src/engine.js && node --check src/io.js",
+    "test:browser": "node tests/browser-smoke.mjs && node tests/browser-workflows.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "playwright": "1.57.0"
+  }
+}
