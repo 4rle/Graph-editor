@@ -1,3 +1,4 @@
+import { chartParts, readExternalCharts } from "./xlsx-charts.js";
 // Browser-native workbook I/O. No network or external parser is required.
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -269,6 +270,52 @@ function validateSheets(sheets) {
       if (++count > MAX_CELLS)
         throw new Error("読み込めるセル数を超えています。");
     }
+    for (const [key, maxIndex, min, max] of [
+      ["columnWidths", 16383, 45, 500],
+      ["rowHeights", 1048575, 22, 500],
+    ])
+      if (sheet[key] !== undefined) {
+        if (
+          !isRecord(sheet[key]) ||
+          Object.entries(sheet[key]).some(
+            ([k, v]) =>
+              !/^\d+$/.test(k) ||
+              Number(k) > maxIndex ||
+              !finiteNumber(v, min, max),
+          )
+        )
+          throw Error("行列の寸法が不正です。");
+      }
+    if (
+      sheet.freezeRows !== undefined &&
+      !finiteNumber(sheet.freezeRows, 0, 20)
+    )
+      throw Error("固定行数が不正です。");
+    if (sheet.freezeCols !== undefined && !finiteNumber(sheet.freezeCols, 0, 5))
+      throw Error("固定列数が不正です。");
+    if (sheet.conditionalRules !== undefined) {
+      if (
+        !Array.isArray(sheet.conditionalRules) ||
+        sheet.conditionalRules.length > 200
+      )
+        throw Error("条件付き書式が不正です。");
+      for (const rule of sheet.conditionalRules) {
+        const refs =
+          typeof rule.range === "string"
+            ? rule.range.split(":").map(parseRef)
+            : [];
+        if (
+          !refs.length ||
+          refs.length > 2 ||
+          refs.some((r) => !r || r.row < 0 || r.col < 0) ||
+          ![">=", ">", "<=", "<", "=", "contains"].includes(rule.operator) ||
+          !safeColor(rule.background) ||
+          !safeColor(rule.color) ||
+          typeof rule.value !== "string"
+        )
+          throw Error("条件付き書式の条件が不正です。");
+      }
+    }
     if (sheet.merges !== undefined) {
       if (!Array.isArray(sheet.merges) || sheet.merges.length > 10000)
         throw new Error("結合セル情報が不正です。");
@@ -321,6 +368,7 @@ function validateVisual(object) {
     "showLegend",
     "showLabels",
     "logY",
+    "logX",
     "transparent",
     "hidden",
   ])
@@ -331,6 +379,34 @@ function validateVisual(object) {
 
 function validateWorkspace(workspace) {
   if (!isRecord(workspace)) throw new Error("ワークスペース情報が不正です。");
+  if (workspace.layout) {
+    const keys = ["tools", "properties", "data"];
+    if (!isRecord(workspace.layout)) throw Error("パネル配置が不正です。");
+    for (const [k, v] of Object.entries(workspace.layout)) {
+      if (keys.includes(k)) {
+        if (
+          ![
+            "left",
+            "right",
+            "top",
+            "bottom",
+            "float",
+            "tab",
+            "hidden",
+            "max",
+          ].includes(v) &&
+          !/^split:(?:tools|properties|data):(?:left|right|top|bottom)$/.test(v)
+        )
+          throw Error("パネル位置が不正です。");
+      } else if (keys.some((key) => k === key + "Position")) {
+        if (
+          !isRecord(v) ||
+          Object.values(v).some((n) => !finiteNumber(n, 0, 100000))
+        )
+          throw Error("パネル寸法が不正です。");
+      } else throw Error("未知のパネルです。");
+    }
+  }
   const keys = [
     "tool",
     "preset",
@@ -341,6 +417,7 @@ function validateWorkspace(workspace) {
     "panelPos",
     "panelWidth",
     "zoom",
+    "layout",
   ];
   if (Object.keys(workspace).some((key) => !keys.includes(key)))
     throw new Error("ワークスペースに不明な設定があります。");
@@ -431,6 +508,11 @@ export function validateProject(project) {
         "box",
         "heatmap",
         "function",
+        "parametric",
+        "polar",
+        "contour",
+        "combo",
+        "dual",
       ].includes(chart.type)
     )
       throw new Error("グラフの種類が不正です。");
@@ -449,6 +531,7 @@ export function validateProject(project) {
     )
       throw new Error("グラフのデータ範囲が不正です。");
     validateVisual(chart);
+    validateAdvancedChart(chart);
     for (const key of ["title", "subtitle", "xLabel", "yLabel", "expression"])
       optionalText(chart, key);
     for (const key of ["sheetX", "sheetY"])
@@ -492,6 +575,15 @@ export function validateProject(project) {
           "horizontal",
           "coordinate",
           "tangent-data",
+          "smoothed",
+          "fitted-tangent",
+          "nonlinear",
+          "extrema",
+          "intersection",
+          "distance",
+          "slope",
+          "transform",
+          "derivative-symbolic",
         ].includes(m.type)
       )
         throw new Error("数学オブジェクトの種類が不正です。");
@@ -511,6 +603,26 @@ export function validateProject(project) {
       optionalNumber(a, "y");
     }
   }
+  for (const k of ["favoriteThemes", "recentThemes"])
+    if (
+      project[k] !== undefined &&
+      (!Array.isArray(project[k]) ||
+        project[k].length > 500 ||
+        !project[k].every(safeId))
+    )
+      throw Error("テーマの一覧が不正です。");
+  if (
+    project.undoState &&
+    (!isRecord(project.undoState) ||
+      !Array.isArray(project.undoState.labels) ||
+      project.undoState.labels.some(
+        (h) =>
+          !isRecord(h) ||
+          typeof h.label !== "string" ||
+          typeof h.time !== "string",
+      ))
+  )
+    throw Error("履歴ラベルが不正です。");
   project.customThemes ??= [];
   project.workspace ??= {};
   if (!Array.isArray(project.customThemes) || project.customThemes.length > 500)
@@ -529,6 +641,7 @@ export function validateProject(project) {
       "showGrid",
       "showPoints",
       "showLegend",
+      "themeTokens",
     ];
     if (
       !isRecord(theme) ||
@@ -567,6 +680,24 @@ export function parseProject(text) {
     project = JSON.parse(text);
   } catch {
     throw new Error("JSONプロジェクトを読み込めません。");
+  }
+  if (project.undoState) {
+    const state = project.undoState;
+    if (
+      !isRecord(state) ||
+      !["history", "future"].every(
+        (k) =>
+          Array.isArray(state[k]) &&
+          state[k].length <= 60 &&
+          state[k].every((v) => typeof v === "string" && v.length < 5000000),
+      )
+    )
+      throw Error("Undo履歴が不正です。");
+    for (const raw of [...state.history, ...state.future]) {
+      const snapshot = JSON.parse(raw);
+      if (snapshot.undoState) throw Error("入れ子の履歴は読み込めません。");
+      validateProject(snapshot);
+    }
   }
   return validateProject(project);
 }
@@ -775,6 +906,11 @@ function readStyles(xml) {
         ? { bold: !/<b\s+val="0"/.test(m[1]) }
         : {}),
       ...(color ? { color: `#${color.slice(-6)}` } : {}),
+      ...(/<i(?:\s|\/>|>)/.test(m[1]) ? { italic: true } : {}),
+      ...(m[1].match(/<sz\s+val="([^"]+)"/)?.[1] &&
+      Number(m[1].match(/<sz\s+val="([^"]+)"/)[1]) !== 11
+        ? { fontSize: Number(m[1].match(/<sz\s+val="([^"]+)"/)[1]) }
+        : {}),
     };
   });
   const fills = [
@@ -822,6 +958,9 @@ function normalizedFormat(cell) {
   const f = cell.format || cell.style || cell;
   const format = {};
   if (f.bold) format.bold = true;
+  if (f.italic) format.italic = true;
+  if (f.fontSize) format.fontSize = Number(f.fontSize);
+  if (f.fontFamily && safeFont(f.fontFamily)) format.fontFamily = f.fontFamily;
   if (/^#[\da-f]{6}$/i.test(f.color || ""))
     format.color = f.color.toUpperCase();
   if (/^#[\da-f]{6}$/i.test(f.bg || "")) format.bg = f.bg.toUpperCase();
@@ -835,7 +974,7 @@ function normalizedFormat(cell) {
 
 function writeStyles(formats) {
   const color = (value) => value.replace("#", "FF");
-  return `<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><numFmts count="${formats.length}">${formats.map((f, i) => `<numFmt numFmtId="${164 + i}" formatCode="${escapeXml(f.numberFormat || "General")}"/>`).join("")}</numFmts><fonts count="${formats.length}">${formats.map((f) => `<font><sz val="11"/><name val="Arial"/>${f.bold ? "<b/>" : ""}${f.color ? `<color rgb="${color(f.color)}"/>` : ""}</font>`).join("")}</fonts><fills count="${formats.length + 2}"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>${formats.map((f) => `<fill><patternFill patternType="${f.bg ? "solid" : "none"}">${f.bg ? `<fgColor rgb="${color(f.bg)}"/><bgColor indexed="64"/>` : ""}</patternFill></fill>`).join("")}</fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="${formats.length}">${formats.map((f, i) => `<xf numFmtId="${164 + i}" fontId="${i}" fillId="${f.bg ? i + 2 : 0}" borderId="0" xfId="0" applyFont="1" applyFill="1" applyNumberFormat="1"${f.align ? ' applyAlignment="1"' : ""}>${f.align ? `<alignment horizontal="${f.align}"/>` : ""}</xf>`).join("")}</cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`;
+  return `<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><numFmts count="${formats.length}">${formats.map((f, i) => `<numFmt numFmtId="${164 + i}" formatCode="${escapeXml(f.numberFormat || "General")}"/>`).join("")}</numFmts><fonts count="${formats.length}">${formats.map((f) => `<font><sz val="${f.fontSize || 11}"/><name val="${escapeXml(f.fontFamily || "Arial")}"/>${f.bold ? "<b/>" : ""}${f.italic ? "<i/>" : ""}${f.color ? `<color rgb="${color(f.color)}"/>` : ""}</font>`).join("")}</fonts><fills count="${formats.length + 2}"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>${formats.map((f) => `<fill><patternFill patternType="${f.bg ? "solid" : "none"}">${f.bg ? `<fgColor rgb="${color(f.bg)}"/><bgColor indexed="64"/>` : ""}</patternFill></fill>`).join("")}</fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="${formats.length}">${formats.map((f, i) => `<xf numFmtId="${164 + i}" fontId="${i}" fillId="${f.bg ? i + 2 : 0}" borderId="0" xfId="0" applyFont="1" applyFill="1" applyNumberFormat="1"${f.align ? ' applyAlignment="1"' : ""}>${f.align ? `<alignment horizontal="${f.align}"/>` : ""}</xf>`).join("")}</cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`;
 }
 
 export async function readXlsx(input) {
@@ -897,6 +1036,13 @@ export async function readXlsx(input) {
                 : "FALSE"
               : value;
       const format = styles[+ca.s] || {};
+      if (
+        /date1904="(?:1|true)"/.test(workbook) &&
+        !formula &&
+        /[dy]/i.test(format.numberFormat || "") &&
+        Number.isFinite(Number(raw))
+      )
+        raw = String(Number(raw) + 1462);
       if (raw !== "" || Object.keys(format).length)
         cells[ref] = { raw, ...(Object.keys(format).length ? { format } : {}) };
     }
@@ -913,20 +1059,78 @@ export async function readXlsx(input) {
       id: `xlsx-${sheets.length + 1}`,
       name: a.name || `Sheet${sheets.length + 1}`,
       cells,
+      columnWidths: Object.fromEntries(
+        [...xml.matchAll(/<col\b([^>]*)\/?\s*>/g)].flatMap((m) => {
+          const a = attrs(m[1]);
+          return Array.from(
+            {
+              length: Math.max(
+                0,
+                Math.min(16384, Number(a.max)) - Number(a.min) + 1,
+              ),
+            },
+            (_, i) => [
+              Number(a.min) - 1 + i,
+              Math.max(45, Math.min(500, Math.round(Number(a.width) * 7 + 5))),
+            ],
+          );
+        }),
+      ),
+      rowHeights: Object.fromEntries(
+        [...xml.matchAll(/<row\b([^>]*)>/g)]
+          .map((m) => attrs(m[1]))
+          .filter((a) => a.ht)
+          .map((a) => [
+            Number(a.r) - 1,
+            Math.max(22, Math.min(500, Number(a.ht) / 0.75)),
+          ]),
+      ),
+      ...(() => {
+        const a = attrs(xml.match(/<pane\b([^>]*)>/)?.[1] || "");
+        return a.state === "frozen"
+          ? {
+              freezeRows: Math.min(20, Number(a.ySplit || 0)),
+              freezeCols: Math.min(5, Number(a.xSplit || 0)),
+              frozen: true,
+            }
+          : {};
+      })(),
+      merges: [...xml.matchAll(/<mergeCell\b[^>]*ref="([^"]+)"/g)].map((m) => {
+        const [a, b] = m[1].split(":").map(parseRef);
+        return { r1: a.row, c1: a.col, r2: b.row, c2: b.col };
+      }),
     });
   }
   if (!sheets.length) throw new Error("読み込めるシートがありません。");
   validateSheets(sheets);
+  const model = files.get("customXml/plot-charts.json");
+  if (model) {
+    const metadata = JSON.parse(model);
+    sheets.charts = (metadata.charts || [])
+      .map((c) => ({
+        ...c,
+        sheetId: sheets[metadata.sheets.indexOf(c.sheetId)]?.id,
+      }))
+      .filter((c) => c.sheetId);
+    validateProject({
+      version: 1,
+      name: "Excel",
+      sheets,
+      charts: sheets.charts,
+    });
+  } else sheets.charts = readExternalCharts(files, sheets);
   return sheets;
 }
 
-export async function writeXlsx(sheets) {
+export async function writeXlsx(sheets, charts = []) {
   validateSheets(sheets);
   const mainNs = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
   const relNs =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
   const xmlHeader = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
   const entries = [];
+  const attachments = chartParts(charts, sheets);
+  entries.push(...attachments.entries);
   const formats = [{}],
     formatIds = new Map([["{}", 0]]);
   for (const sheet of sheets)
@@ -940,7 +1144,7 @@ export async function writeXlsx(sheets) {
     }
   entries.push([
     "[Content_Types].xml",
-    `${xmlHeader}<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>${sheets.map((_, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join("")}</Types>`,
+    `${xmlHeader}<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="json" ContentType="application/json"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>${sheets.map((_, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join("")}${attachments.overrides.join("")}</Types>`,
   ]);
   entries.push([
     "_rels/.rels",
@@ -992,17 +1196,181 @@ export async function writeXlsx(sheets) {
     }
     entries.push([
       `xl/worksheets/sheet${index + 1}.xml`,
-      `${xmlHeader}<worksheet xmlns="${mainNs}"><sheetData>${[...rows]
+      `${xmlHeader}<worksheet xmlns="${mainNs}" xmlns:r="${relNs}">${sheet.freezeRows || sheet.freezeCols ? `<sheetViews><sheetView workbookViewId="0"><pane xSplit="${sheet.freezeCols || 0}" ySplit="${sheet.freezeRows || 0}" topLeftCell="${colName(sheet.freezeCols || 0)}${(sheet.freezeRows || 0) + 1}" state="frozen"/></sheetView></sheetViews>` : ""}${
+        Object.keys(sheet.columnWidths || {}).length
+          ? `<cols>${Object.entries(sheet.columnWidths)
+              .map(
+                ([i, w]) =>
+                  `<col min="${Number(i) + 1}" max="${Number(i) + 1}" width="${(w - 5) / 7}" customWidth="1"/>`,
+              )
+              .join("")}</cols>`
+          : ""
+      }<sheetData>${[...rows]
         .sort((a, b) => a[0] - b[0])
         .map(
           ([r, cells]) =>
-            `<row r="${r + 1}">${cells
+            `<row r="${r + 1}" ${sheet.rowHeights?.[r] ? `ht="${sheet.rowHeights[r] * 0.75}" customHeight="1"` : ""}>${cells
               .sort((a, b) => a.col - b.col)
               .map((c) => c.content)
               .join("")}</row>`,
         )
-        .join("")}</sheetData></worksheet>`,
+        .join(
+          "",
+        )}</sheetData>${sheet.merges?.length ? `<mergeCells count="${sheet.merges.length}">${sheet.merges.map((m) => `<mergeCell ref="${colName(m.c1)}${m.r1 + 1}:${colName(m.c2)}${m.r2 + 1}"/>`).join("")}</mergeCells>` : ""}${attachments.drawings.get(index) || ""}</worksheet>`,
     ]);
   });
+  if (charts.length) {
+    entries.push([
+      "customXml/plot-charts.json",
+      JSON.stringify({ sheets: sheets.map((s) => s.id), charts }),
+    ]);
+  }
   return zip(entries);
+}
+
+function validateAdvancedChart(chart) {
+  if (chart._selectedObjects !== undefined)
+    throw Error("内部選択状態は読み込めません。");
+  if (
+    chart.secondarySeries !== undefined &&
+    (!Array.isArray(chart.secondarySeries) ||
+      chart.secondarySeries.some(
+        (i) => !Number.isInteger(i) || i < 0 || i > 1000,
+      ))
+  )
+    throw Error("左右軸の系列が不正です。");
+  if (
+    chart.seriesTypes !== undefined &&
+    (!Array.isArray(chart.seriesTypes) ||
+      chart.seriesTypes.some((t) => !["line", "bar"].includes(t)))
+  )
+    throw Error("複合グラフの系列が不正です。");
+  optionalNumber(chart, "contourLevels", 1, 50);
+  if (chart.parameterLimits) {
+    if (!isRecord(chart.parameterLimits)) throw Error("変数の範囲が不正です。");
+    for (const v of Object.values(chart.parameterLimits))
+      if (
+        !isRecord(v) ||
+        !finiteNumber(v.min) ||
+        !finiteNumber(v.max) ||
+        v.min >= v.max
+      )
+        throw Error("変数の最小・最大を確認してください。");
+  }
+
+  for (const k of [
+    "domainMin",
+    "domainMax",
+    "marginLeft",
+    "marginRight",
+    "marginTop",
+    "marginBottom",
+    "minorTicks",
+    "pointSize",
+    "animationDuration",
+  ])
+    optionalNumber(chart, k, -100000, 100000);
+  for (const k of [
+    "expression",
+    "xExpression",
+    "yExpression",
+    "errorRange",
+    "xColumn",
+  ])
+    optionalText(chart, k, 4000);
+  if (chart.parameters) {
+    if (
+      !isRecord(chart.parameters) ||
+      Object.keys(chart.parameters).length > 20
+    )
+      throw Error("変数が多すぎます。");
+    for (const [k, v] of Object.entries(chart.parameters))
+      if (!/^[a-zA-Z][a-zA-Z0-9_]*$/.test(k) || !finiteNumber(v))
+        throw Error("変数が不正です。");
+  }
+  if (
+    chart.seriesColumns &&
+    (!Array.isArray(chart.seriesColumns) ||
+      chart.seriesColumns.some((s) => !/^([A-Z]+)$/.test(s)))
+  )
+    throw Error("系列列が不正です。");
+  if (chart.objects !== undefined) {
+    if (!Array.isArray(chart.objects) || chart.objects.length > 1000)
+      throw Error("図形数が多すぎます。");
+    const ids = new Set();
+    for (const o of chart.objects) {
+      if (
+        !isRecord(o) ||
+        !safeId(o.id) ||
+        ids.has(o.id) ||
+        ![
+          "rect",
+          "ellipse",
+          "line",
+          "arrow",
+          "text",
+          "latex",
+          "polygon",
+          "bezier",
+          "compound",
+        ].includes(o.type)
+      )
+        throw Error("図形が不正です。");
+      ids.add(o.id);
+      for (const k of [
+        "x",
+        "y",
+        "width",
+        "height",
+        "rotation",
+        "opacity",
+        "lineWidth",
+        "fontSize",
+        "letterSpacing",
+        "lineHeight",
+        "c1x",
+        "c1y",
+        "c2x",
+        "c2y",
+      ])
+        optionalNumber(o, k, -100000, 100000);
+      for (const k of ["fill", "stroke", "color"])
+        if (o[k] !== undefined && o[k] !== "none" && !safeColor(o[k]))
+          throw Error("図形の色が不正です。");
+      if (o.fontFamily && !safeFont(o.fontFamily))
+        throw Error("図形のフォントが不正です。");
+      for (const k of ["name", "text", "groupId"]) optionalText(o, k);
+      if (
+        o.rings &&
+        (!Array.isArray(o.rings) ||
+          o.rings.some(
+            (r) =>
+              !Array.isArray(r) ||
+              r.some(
+                (p) =>
+                  !Array.isArray(p) ||
+                  p.length !== 2 ||
+                  p.some((n) => !finiteNumber(n)),
+              ),
+          ))
+      )
+        throw Error("複合図形の座標が不正です。");
+      if (
+        o.points &&
+        (!Array.isArray(o.points) ||
+          o.points.length > 5000 ||
+          o.points.some(
+            (p) =>
+              !Array.isArray(p) ||
+              p.length !== 2 ||
+              p.some((n) => !finiteNumber(n)),
+          ))
+      )
+        throw Error("多角形の座標が不正です。");
+      if (o.opacity !== undefined && (o.opacity < 0 || o.opacity > 1))
+        throw Error("透明度は0から1で指定してください。");
+      if (o.width < 0 || o.height < 0)
+        throw Error("幅と高さは0以上で指定してください。");
+    }
+  }
 }

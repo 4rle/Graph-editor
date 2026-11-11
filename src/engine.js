@@ -1,3 +1,5 @@
+import * as FormulaJS from "@formulajs/formulajs";
+import { det, inv, multiply, transpose } from "mathjs";
 /** Dependency-free spreadsheet and numerical engine. No dynamic code execution. */
 export function colName(index) {
   let n = index + 1,
@@ -441,8 +443,20 @@ function call(name, args) {
           ? d.getUTCMonth() + 1
           : d.getUTCDate();
     }
-    default:
-      throw new Error("#NAME?");
+    default: {
+      const matrix = {
+        MDETERM: det,
+        MINVERSE: inv,
+        MMULT: multiply,
+        TRANSPOSE: transpose,
+      };
+      if (matrix[name]) return matrix[name](...args);
+      const fn = name.split(".").reduce((o, k) => o?.[k], FormulaJS);
+      if (typeof fn !== "function") throw new Error("#NAME?");
+      const value = fn(...args);
+      if (value instanceof Error) throw value;
+      return value;
+    }
   }
 }
 function execute(ast, context) {
@@ -457,10 +471,23 @@ function execute(ast, context) {
     throw new Error("#NAME?");
   }
   if (ast.kind === "ref") return context.read(ast.value, ast.sheet);
-  if (ast.kind === "range")
-    return rangeCells(`${ast.start}:${ast.end}`).map((ref) =>
-      context.read(ref, ast.sheet),
-    );
+  if (ast.kind === "range") {
+    const range = parseRange(`${ast.start}:${ast.end}`),
+      rows = [];
+    if (
+      (range.end.row - range.start.row + 1) *
+        (range.end.col - range.start.col + 1) >
+      100000
+    )
+      throw Error("#REF!");
+    for (let r = range.start.row; r <= range.end.row; r++) {
+      const row = [];
+      for (let c = range.start.col; c <= range.end.col; c++)
+        row.push(context.read(cellRef(r, c), ast.sheet));
+      rows.push(row);
+    }
+    return rows;
+  }
   if (ast.kind === "unary")
     return ast.op === "-"
       ? -num(execute(ast.child, context))
@@ -545,7 +572,29 @@ function createContext(
       if (visiting.has(key)) throw new Error("#CYCLE!");
       const stored = selected.cells?.[normalized],
         raw = stored && typeof stored === "object" ? stored.raw : stored;
-      if (raw === undefined || raw === null || raw === "") return "";
+      if (raw === undefined || raw === null || raw === "") {
+        const at = parseRef(normalized);
+        for (const [origin, cell] of Object.entries(selected.cells || {})) {
+          if (
+            !/^=(?:MMULT|MINVERSE|TRANSPOSE|SEQUENCE)\(/i.test(String(cell.raw))
+          )
+            continue;
+          const p = parseRef(origin);
+          if (p.row > at.row || p.col > at.col || origin === normalized)
+            continue;
+          const value = createContext(
+            sheets,
+            selected.id,
+            visiting,
+            cache,
+          ).read(origin);
+          if (Array.isArray(value)) {
+            const result = value[at.row - p.row]?.[at.col - p.col];
+            if (result !== undefined) return result;
+          }
+        }
+        return "";
+      }
       visiting.add(key);
       let result;
       try {
@@ -572,7 +621,8 @@ function createContext(
 }
 export function evalCell(sheets, sheetId, row, col) {
   try {
-    return createContext(sheets, sheetId).read(cellRef(row, col));
+    const result = createContext(sheets, sheetId).read(cellRef(row, col));
+    return Array.isArray(result) ? (result[0]?.[0] ?? result[0]) : result;
   } catch (error) {
     return /^#/.test(error.message) ? error.message : "#VALUE!";
   }

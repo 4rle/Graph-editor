@@ -1,3 +1,11 @@
+import { themeEffects } from "./theme-effects.js";
+import { extraThemes } from "./extra-themes.js";
+import {
+  prepareChart,
+  contourSVG,
+  compositeSVG,
+  decorateSVG,
+} from "./advanced-chart.js";
 import {
   evalCell,
   parseRef,
@@ -142,6 +150,7 @@ export const themes = [
   },
 ];
 
+themes.push(...extraThemes);
 const esc = (v) =>
   String(v ?? "").replace(
     /[&<>"']/g,
@@ -197,7 +206,11 @@ export function getChartData(chart, sheets) {
   const labels = [];
   const series = [];
   // The first row holds series names and the first column holds categories / X values.
-  for (let c = c0 + 1; c <= c1; c++)
+  const mapped = chart.seriesColumns?.length
+    ? chart.seriesColumns.map((col) => parseRef(col + "1").col)
+    : Array.from({ length: Math.max(0, c1 - c0) }, (_, i) => c0 + i + 1);
+  const xColumn = chart.xColumn ? parseRef(chart.xColumn + "1").col : c0;
+  for (const c of mapped)
     series.push({
       name: String(read(r0, c) || `系列 ${c - c0}`),
       column: c,
@@ -210,7 +223,7 @@ export function getChartData(chart, sheets) {
       points: [],
     });
   for (let r = r0 + 1; r <= r1; r++) {
-    const raw = read(r, c0);
+    const raw = read(r, xColumn);
     if (raw === "" && series.every((s) => read(r, s.column) === "")) continue;
     const label = String(raw ?? "");
     labels.push(label);
@@ -271,7 +284,7 @@ function linePath(points, sx, sy) {
   return d.trim();
 }
 
-export function renderChart(
+function baseRenderChart(
   chart,
   sheets,
   { width = 900, height = 520, interactive = true } = {},
@@ -289,18 +302,18 @@ export function renderChart(
     .filter((s) => !hidden.includes(s.index) && !hidden.includes(s.name));
   const font = chart.fontFamily || theme.font;
   const fs = n(chart.fontSize, 12),
-    lw = n(chart.lineWidth, 3),
-    pointSize = n(chart.pointSize, 4);
-  const left = Math.max(62, width * 0.085),
-    right = width - 38,
-    top = height < 300 ? 65 : 100,
-    bottom = height - (chart.xLabel ? 64 : 45);
+    lw = n(chart.lineWidth, theme.lineWidth || 3),
+    pointSize = n(chart.pointSize, theme.pointSize || 4);
+  const left = Number(chart.marginLeft ?? Math.max(62, width * 0.085)),
+    right = width - Number(chart.marginRight ?? 38),
+    top = Number(chart.marginTop ?? (height < 300 ? 65 : 100)),
+    bottom = height - Number(chart.marginBottom ?? (chart.xLabel ? 64 : 45));
   const pw = right - left,
     ph = Math.max(50, bottom - top);
   const text = (x, y, value, attr = "") =>
     `<text x="${x}" y="${y}" ${attr}>${esc(value)}</text>`;
   const title = chart.title || "名称未設定のグラフ";
-  let svg = `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" role="img" aria-label="${esc(title)}" class="chart-svg" style="font-family:${esc(font)};font-size:${fs}px"><rect width="${width}" height="${height}" fill="${esc(bg)}"/><defs><clipPath id="plot-${id}"><rect x="${left}" y="${top}" width="${pw}" height="${ph}"/></clipPath></defs><g fill="${esc(fg)}">${text(left, 38, title, `font-size="${Math.min(23, width / 30)}" font-weight="600" data-chart-title="true"`)}${chart.subtitle ? text(left, 60, chart.subtitle, `fill="${muted}" font-size="${fs - 1}"`) : ""}</g>`;
+  let svg = `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" role="img" aria-label="${esc(title)}" class="chart-svg" style="font-family:${esc(font)};font-size:${fs}px"><rect width="${width}" height="${height}" fill="${chart.transparent ? "none" : esc(bg)}"/><defs><clipPath id="plot-${id}"><rect x="${left}" y="${top}" width="${pw}" height="${ph}"/></clipPath></defs><g fill="${esc(fg)}">${text(left, 38, title, `font-size="${Math.min(23, width / 30)}" font-weight="600" data-chart-title="true"`)}${chart.subtitle ? text(left, 60, chart.subtitle, `fill="${muted}" font-size="${fs - 1}"`) : ""}</g>`;
   if (chart.showLegend !== false) {
     let lx = left;
     const ly = height < 300 ? 58 : 78;
@@ -473,7 +486,22 @@ export function renderChart(
     if (m.hidden) continue;
     const color = m.color || colors[(visible.length + k) % colors.length];
     try {
-      if (
+      if (m.type === "sampled") {
+        overlays.push({
+          type: "line",
+          points: m.points,
+          color,
+          label: m.label,
+          dashed: true,
+        });
+      } else if (m.type === "calculated-point") {
+        overlays.push({
+          type: "coordinate",
+          point: m.point,
+          color,
+          label: m.label,
+        });
+      } else if (
         [
           "origin",
           "vertical",
@@ -604,8 +632,11 @@ export function renderChart(
             const x = a + ((b - a) * i) / 200;
             return { x, y: evaluateMath(expression, x) };
           });
-          value = integrate(expression, a, b);
-          method = "Simpson法";
+          value =
+            m.method === "analytic"
+              ? m.analyticValue
+              : integrate(expression, a, b);
+          method = m.method === "analytic" ? "解析的積分" : "Simpson法";
         } else {
           const source = [...(data.series[n(m.series, 0)]?.points || [])].sort(
               (a, b) => a.x - b.x,
@@ -709,11 +740,38 @@ export function renderChart(
   const categoryPad = categorical
     ? (pw / Math.max(1, data.labels.length)) * 0.45
     : 0;
+  const positiveX = all.map((p) => p.x).filter((x) => x > 0),
+    logX = chart.logX === true,
+    logXlo = chart.xMin > 0 ? Number(chart.xMin) : Math.min(...positiveX, 1),
+    logXhi = chart.xMax > 0 ? Number(chart.xMax) : Math.max(...positiveX, 10);
   const sx = (x) =>
-    left + categoryPad + ((x - xMin) / (xMax - xMin)) * (pw - 2 * categoryPad);
+    left +
+    categoryPad +
+    (logX
+      ? (Math.log10(x) - Math.log10(logXlo)) /
+        (Math.log10(logXhi) - Math.log10(logXlo) || 1)
+      : (x - xMin) / (xMax - xMin)) *
+      (pw - 2 * categoryPad);
   const xt = categorical
     ? []
-    : ticks(xMin, xMax, 6).filter((v) => v >= xMin - 1e-8 && v <= xMax + 1e-8);
+    : logX
+      ? Array.from(
+          {
+            length: Math.min(
+              100,
+              Math.max(
+                0,
+                Math.floor(Math.log10(logXhi)) -
+                  Math.ceil(Math.log10(logXlo)) +
+                  1,
+              ),
+            ),
+          },
+          (_, i) => 10 ** (Math.ceil(Math.log10(logXlo)) + i),
+        )
+      : ticks(xMin, xMax, 6).filter(
+          (v) => v >= xMin - 1e-8 && v <= xMax + 1e-8,
+        );
   if (chart.showGrid !== false) {
     for (const y of yTicks) {
       if (log ? y < loglo || y > loghi : y < ylo || y > yhi) continue;
@@ -769,6 +827,15 @@ export function renderChart(
     );
   if (chart.yLabel)
     svg += `<text x="19" y="${(top + bottom) / 2}" fill="${fg}" text-anchor="middle" transform="rotate(-90 19 ${(top + bottom) / 2})" font-size="${fs}">${esc(chart.yLabel)}</text>`;
+  if (Number(chart.minorTicks) > 0) {
+    const count = Math.min(10, Number(chart.minorTicks));
+    for (let i = 0; i < 5; i++)
+      for (let j = 1; j <= count; j++) {
+        const x = left + (pw * (i + j / (count + 1))) / 5,
+          y = top + (ph * (i + j / (count + 1))) / 5;
+        svg += `<path d="M${x} ${bottom}v4 M${left - 4} ${y}h4" stroke="${esc(muted)}"/>`;
+      }
+  }
   svg += `<g clip-path="url(#plot-${id})">`;
   if (type === "heatmap") {
     const min = Math.min(...all.map((p) => p.y)),
@@ -798,7 +865,9 @@ export function renderChart(
     const stackedPos = new Map(),
       stackedNeg = new Map();
     plotSeries.forEach((s) => {
-      const pts = s.points.filter((p) => valid(p) && (!log || p.y > 0));
+      const pts = s.points.filter(
+        (p) => valid(p) && (!log || p.y > 0) && (!chart.logX || p.x > 0),
+      );
       if (["bar", "histogram", "stacked"].includes(type)) {
         const slot = pw / Math.max(1, pts.length),
           count = type === "stacked" ? 1 : plotSeries.length,
@@ -828,7 +897,7 @@ export function renderChart(
           svg += `<path d="${d}" fill="none" stroke="${esc(s.color)}" stroke-width="${lw}" stroke-linecap="round" stroke-linejoin="round" ${chart.lineStyle === "dashed" ? 'stroke-dasharray="8 5"' : ""}/>`;
         if (chart.showPoints !== false || type === "scatter")
           pts.forEach((p, i) => {
-            svg += `<circle cx="${sx(p.x)}" cy="${sy(p.y)}" r="${pointSize}" fill="${esc(s.color)}" stroke="${esc(bg)}" stroke-width="2" ${pointAttr(s, p, i)}>${tooltip(s, p)}</circle>`;
+            svg += `<${chart.pointShape === "square" ? "rect" : "circle"} ${chart.pointShape === "square" ? `x="${sx(p.x) - pointSize}" y="${sy(p.y) - pointSize}" width="${pointSize * 2}" height="${pointSize * 2}"` : `cx="${sx(p.x)}" cy="${sy(p.y)}" r="${pointSize}"`} fill="${esc(s.color)}" stroke="${esc(bg)}" stroke-width="2" ${pointAttr(s, p, i)}>${tooltip(s, p)}</${chart.pointShape === "square" ? "rect" : "circle"}>`;
           });
         if (chart.showLabels)
           pts.forEach((p) => {
@@ -841,8 +910,18 @@ export function renderChart(
           });
         if (chart.errorBars || n(chart.errorAmount) > 0)
           pts.forEach((p) => {
-            const error =
-                n(chart.errorAmount) > 0
+            const error = chart.errorRange
+                ? Math.abs(
+                    Number(
+                      evalCell(
+                        sheets,
+                        chart.sheetId,
+                        p.row,
+                        parseRef(chart.errorRange.split(":")[0]).col,
+                      ),
+                    ),
+                  )
+                : n(chart.errorAmount) > 0
                   ? n(chart.errorAmount)
                   : (Math.abs(p.y) * n(chart.errorPercent, 5)) / 100,
               y1 = sy(log ? Math.max(loglo, p.y - error) : p.y - error),
@@ -856,7 +935,9 @@ export function renderChart(
   overlays
     .filter((o) => o.type !== "coordinate")
     .forEach((o) => {
-      const pts = o.points.filter((p) => valid(p) && (!log || p.y > 0));
+      const pts = o.points.filter(
+        (p) => valid(p) && (!log || p.y > 0) && (!chart.logX || p.x > 0),
+      );
       if (!pts.length) return;
       const d = linePath(pts, sx, sy);
       if (o.type === "area")
@@ -867,6 +948,7 @@ export function renderChart(
   overlays
     .filter((o) => o.type === "coordinate" && (!log || o.point.y > 0))
     .forEach((o) => {
+      svg += `<circle cx="${sx(o.point.x)}" cy="${sy(o.point.y)}" r="4" fill="${esc(o.color)}"/>`;
       svg += text(
         sx(o.point.x) + 9,
         sy(o.point.y) - 12,
@@ -895,4 +977,20 @@ export function renderChart(
       );
     });
   return svg + "</svg>";
+}
+
+export function renderChart(original, sheets, options = {}) {
+  const width = options.width || 900,
+    height = options.height || 520;
+  const prepared = prepareChart(original, sheets, getChartData),
+    chart = {
+      ...prepared.chart,
+      id: prepared.chart.id + "-" + width + "x" + height,
+    };
+  let svg;
+  if (chart.type === "contour") svg = contourSVG(chart, width, height);
+  else if (["combo", "dual"].includes(chart.type))
+    svg = compositeSVG(chart, prepared.sheets, getChartData, width, height);
+  else svg = baseRenderChart(chart, prepared.sheets, options);
+  return decorateSVG(themeEffects(svg, original), original, width, height);
 }
