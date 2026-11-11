@@ -13,8 +13,9 @@
     "prestart": "npm run build",
     "predev": "npm run build",
     "pretest": "npm run build",
-    "deploy": "npm run build && wrangler deploy",
-    "dev:cloudflare": "npm run build && wrangler dev --local",
+    "deploy": "wrangler deploy",
+    "dev:cloudflare": "wrangler dev --local",
+    "test:deploy-clean": "node tests/verify-clean-deploy.mjs",
     "test:deployment": "node tests/verify-deployment.mjs",
     "pretest:deployment": "npm run build"
   },

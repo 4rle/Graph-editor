@@ -18,7 +18,7 @@ npm start
 
 ## Cloudflareへのデプロイ
 
-Workersのビルドコマンドは `npm run build`、デプロイコマンドは `npx wrangler deploy` です。`wrangler.jsonc` が `dist` を配信します。詳しい設定と白画面の修正内容は [Cloudflare配信手順](docs/CLOUDFLARE.md) を参照してください。
+Workersのデプロイコマンドは `npx wrangler deploy` です。`wrangler.jsonc` がビルド `npm run build` を先に実行し、生成した `dist` を配信します。Cloudflare側のビルドコマンドが空欄でも動作します。詳しい設定と白画面の修正内容は [Cloudflare配信手順](docs/CLOUDFLARE.md) を参照してください。
 
 ## 操作
 
