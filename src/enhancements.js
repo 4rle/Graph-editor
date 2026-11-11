@@ -1,3 +1,8 @@
+import {
+  applyChartTheme,
+  themeSnapshot,
+  themeStyleOptions,
+} from "./theme-design.js";
 import { colorTransform, applyPDFColor } from "./color-management.js";
 import { vectorArea } from "./vector-geometry.js";
 import {
@@ -260,16 +265,7 @@ export function advancedPanel(tool) {
           "テーマの構成要素",
           form(
             "tokens",
-            select(
-              "style",
-              "Style",
-              [
-                ["flat", "Flat"],
-                ["outline", "Outline"],
-                ["soft", "Soft"],
-              ],
-              ch.themeTokens?.style,
-            ) +
+            select("style", "Style", themeStyleOptions, ch.themeTokens?.style) +
               select(
                 "palette",
                 "Palette",
@@ -283,6 +279,7 @@ export function advancedPanel(tool) {
                   ["sans-serif", "Sans Serif"],
                   ["serif", "Serif"],
                   ["monospace", "Monospace"],
+                  ["Trebuchet MS, sans-serif", "丸みのある Sans Serif"],
                 ],
                 ch.fontFamily,
               ) +
@@ -347,6 +344,8 @@ export function advancedPanel(tool) {
               [
                 ["circle", "円"],
                 ["square", "四角"],
+                ["diamond", "ひし形"],
+                ["series", "系列ごとに変更"],
               ],
               ch.pointShape,
             ) +
@@ -776,16 +775,10 @@ function onClick(e) {
             theme: {
               id: crypto.randomUUID(),
               name: chart().customThemeName || "Custom Theme",
-              theme: chart().theme,
-              colors: chart().colors?.length
-                ? chart().colors
-                : themes.find((t) => t.id === chart().theme)?.colors,
-              fontFamily: chart().fontFamily || "sans-serif",
-              fontSize: chart().fontSize || 12,
-              lineWidth: chart().lineWidth || 3,
-              background: chart().background || "#ffffff",
-              textColor: chart().textColor || "#333333",
-              themeTokens: chart().themeTokens || {},
+              ...themeSnapshot(
+                chart(),
+                themes.find((t) => t.id === chart().theme) || themes[0],
+              ),
             },
           },
           null,
@@ -1161,22 +1154,13 @@ function onSubmit(e) {
     }
     if (kind === "tokens") {
       const palette = themes.find((t) => t.id === d.get("palette")),
-        layout = d.get("layout");
-      C.change("デザイントークンを適用", () =>
-        Object.assign(chart(), {
-          themeTokens: Object.fromEntries(d),
-          theme: palette.id,
-          colors: [...palette.colors],
-          background: d.get("background"),
-          fontFamily: d.get("typography"),
-          lineWidth: d.get("style") === "outline" ? 3 : 2,
-          pointShape: d.get("style") === "outline" ? "square" : "circle",
-          showGrid: d.get("elements") !== "minimal",
-          marginLeft:
-            layout === "spacious" ? 110 : layout === "compact" ? 60 : 80,
-          marginTop: layout === "spacious" ? 125 : 85,
-        }),
-      );
+        base = themes.find((t) => t.id === chart().theme) || themes[0];
+      C.change("デザイントークンを適用", () => {
+        applyChartTheme(chart(), base, Object.fromEntries(d));
+        chart().colors = [...palette.colors];
+        chart().background = d.get("background");
+        chart().fontFamily = d.get("typography");
+      });
     }
     if (kind === "animation") {
       C.change("アニメーションを設定", () => {

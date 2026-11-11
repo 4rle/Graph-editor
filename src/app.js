@@ -1,3 +1,4 @@
+import { applyChartTheme, themeSnapshot } from "./theme-design.js";
 import {
   initializeCanvasEditing,
   highlightSelectedData,
@@ -559,7 +560,18 @@ function sheetInspector() {
   }<div class="inspector-foot">${icon("help", 14)} 表とグラフは、いつでも連動します</div></aside>`;
 }
 function themeCard(t, small = false) {
-  return `<button class="theme-card ${currentChart()?.theme === t.id ? "selected" : ""} ${small ? "small" : ""}" data-action="theme" data-theme="${t.id}" title="${esc(t.name)}"><div class="theme-preview" style="background:${t.bg};color:${t.fg}">${renderChart({ ...currentChart(), id: "preview-" + t.id, theme: t.id, colors: [], background: t.bg, textColor: t.fg, fontFamily: t.font, title: " ", subtitle: "", xLabel: "", yLabel: "", math: [], objects: [], annotations: [], showLegend: false, showPoints: false }, project.sheets, { width: 320, height: 190, interactive: false })}${currentChart()?.theme === t.id ? `<i>${icon("check", 11)}</i>` : ""}</div><span>${esc(t.name)}</span></button>`;
+  const preview = applyChartTheme(
+    {
+      ...currentChart(),
+      id: "preview-" + t.id,
+      math: [],
+      objects: [],
+      annotations: [],
+    },
+    t,
+  );
+  preview.showLegend = false;
+  return `<button class="theme-card ${currentChart()?.theme === t.id ? "selected" : ""} ${small ? "small" : ""}" data-action="theme" data-theme="${t.id}" title="${esc(t.name)}"><div class="theme-preview" style="background:${t.bg};color:${t.fg}">${renderChart(preview, project.sheets, { width: 320, height: 190, interactive: false })}${currentChart()?.theme === t.id ? `<i>${icon("check", 11)}</i>` : ""}</div><span>${esc(t.name)}</span></button>`;
 }
 function sheetTabs() {
   return `<div class="sheet-tabs"><div class="sheet-tab-controls">${btn("add-sheet", "", "plus", "icon-button", 'aria-label="シートを追加"')}${btn("sheet-menu", "", "grid", "icon-button", 'aria-label="シートの管理"')}</div>${project.sheets.map((s) => `<button class="sheet-tab ${s.id === ui.sheetId ? "active" : ""}" data-action="select-sheet" data-sheet="${s.id}">${icon("grid", 13)}${esc(s.name)}${s.id === ui.sheetId ? icon("down", 11) : ""}</button>`).join("")}<div class="toolbar-spacer"></div><div class="grid-pages">${btn("page-left", "‹", "", "icon-button", 'aria-label="前の列"')}${btn("page-up", "↑", "", "icon-button", 'aria-label="前の60行"')}<span>${cellRef(ui.rowOffset || 0, ui.colOffset || 0)}–${cellRef((ui.rowOffset || 0) + 59, (ui.colOffset || 0) + 19)}</span>${btn("page-down", "↓", "", "icon-button", 'aria-label="次の60行"')}${btn("page-right", "›", "", "icon-button", 'aria-label="次の列"')}</div><span class="sheet-count">${project.sheets.length} シート</span></div>`;
@@ -1663,14 +1675,14 @@ const actions = {
   },
   theme: (el) =>
     change("テーマを変更", () => {
-      currentChart().theme = el.dataset.theme;
+      applyChartTheme(
+        currentChart(),
+        themes.find((t) => t.id === el.dataset.theme) || themes[0],
+      );
       project.recentThemes = [
         el.dataset.theme,
         ...(project.recentThemes || []).filter((id) => id !== el.dataset.theme),
       ].slice(0, 20);
-      currentChart().colors = [];
-      delete currentChart().background;
-      delete currentChart().textColor;
     }),
   "chart-type": (el) => chartChange("type", el.dataset.type),
   "use-selection": () => chartChange("range", selectedRange()),
@@ -1763,15 +1775,7 @@ const actions = {
         project.customThemes.push({
           id: uid(),
           name: v,
-          theme: c.theme,
-          colors: c.colors?.length ? c.colors : t.colors,
-          fontSize: c.fontSize,
-          fontFamily: c.fontFamily,
-          lineWidth: c.lineWidth,
-          background: c.background,
-          textColor: c.textColor,
-          showGrid: c.showGrid,
-          showPoints: c.showPoints,
+          ...themeSnapshot(c, t),
         });
       }),
     ),
@@ -1779,6 +1783,11 @@ const actions = {
     change("カスタムテーマを適用", () => {
       let t = project.customThemes.find((t) => t.id === el.dataset.theme);
       const { id, name, ...properties } = t;
+      applyChartTheme(
+        currentChart(),
+        themes.find((t) => t.id === properties.theme) || themes[0],
+        properties.themeTokens,
+      );
       Object.assign(currentChart(), properties);
     }),
   geometry: (el) => {

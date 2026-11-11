@@ -1,35 +1,39 @@
-import { extraThemes } from "./extra-themes.js";
 export function themeEffects(svg, chart) {
-  const id = String(chart.id || "chart").replace(/[^a-zA-Z0-9_-]/g, ""),
-    name = chart.theme || "",
-    style =
-      chart.themeTokens?.style || extraThemes.find((t) => t.id === name)?.style;
+  const d = chart._design,
+    id = chart.id,
+    theme = chart._theme;
+  if (!d) return svg;
   let defs = "";
-  if (!chart.transparent && /gradient|aurora|glass/.test(name)) {
-    defs += `<linearGradient id="theme-bg-${id}" x2="1" y2="1"><stop stop-color="${chart.background || (/aurora/.test(name) ? "#1c1c22" : "#edf0f8")}"/><stop offset="1" stop-color="${/aurora/.test(name) ? "#3b315b" : "#f5e9f0"}"/></linearGradient>`;
+  if (
+    !chart.transparent &&
+    ["gradient", "dark-gradient"].includes(d.backgroundEffect)
+  ) {
+    const end =
+      d.backgroundEffect === "dark-gradient" ? "#34264f" : theme.colors[1];
+    defs += `<linearGradient id="theme-bg-${id}" x2="1" y2="1"><stop stop-color="${chart.background}"/><stop offset="1" stop-color="${end}" stop-opacity="${d.backgroundEffect === "dark-gradient" ? 1 : 0.2}"/></linearGradient>`;
     svg = svg.replace(
-      /(<rect\b[^>]*)(fill="[^\"]*")/,
-      `$1fill="url(#theme-bg-${id})"`,
+      /(data-chart-background="true"[^>]*fill=")[^"]+"/,
+      `$1url(#theme-bg-${id})"`,
     );
   }
-  if (/glass|neumorphism|flat-2|soft-ui/.test(name) || style === "soft") {
-    defs += `<filter id="theme-shadow-${id}" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="2" dy="3" stdDeviation="4" flood-color="#777777" flood-opacity="0.15"/></filter>`;
+  if (["soft", "raised", "hard"].includes(d.shadow)) {
+    const hard = d.shadow === "hard";
+    defs += `<filter id="theme-shadow-${id}" x="-20%" y="-30%" width="150%" height="170%"><feDropShadow dx="${hard ? 5 : 0}" dy="${hard ? 5 : 4}" stdDeviation="${hard ? 0 : d.shadow === "raised" ? 9 : 5}" flood-color="${chart.textColor}" flood-opacity="${hard ? 0.85 : 0.13}"/></filter>`;
+  }
+  if (d.shadow === "glow") {
+    defs += `<filter id="theme-glow-${id}" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur in="SourceGraphic" stdDeviation="2" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>`;
     svg = svg.replace(
-      /(<path\b[^>]*stroke-width="[^\"]*"[^>]*)(\/>)/g,
-      `$1 filter="url(#theme-shadow-${id})"$2`,
+      /class="chart-series-line"/g,
+      `class="chart-series-line" filter="url(#theme-glow-${id})"`,
     );
   }
-  if (/outline|brutalism|comic|technical/.test(name) || style === "outline")
-    svg = svg.replace(/stroke-linecap="round"/g, 'stroke-linecap="square"');
-  if (/pixel/.test(name))
+  if (d.style === "pixel")
     svg = svg.replace("<svg ", '<svg shape-rendering="crispEdges" ');
-  if (/rounded|kawaii|pastel|soft-ui/.test(name))
-    svg = svg.replace(/<rect width=/, '<rect rx="14" width=');
-  if (/hand-drawn|risograph/.test(name)) {
-    defs += `<filter id="theme-texture-${id}"><feTurbulence baseFrequency="0.9" numOctaves="2" seed="7" result="noise"/><feComposite in="SourceGraphic" in2="noise" operator="in"/></filter>`;
+  if (d.backgroundEffect === "paper" && !chart.transparent) {
+    defs += `<pattern id="theme-paper-${id}" width="7" height="7" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r=".45" fill="${chart.textColor}" opacity=".07"/></pattern>`;
     svg = svg.replace(
-      /(<path\b[^>]*stroke-width="[^\"]*"[^>]*)(\/>)/g,
-      `$1 opacity="0.88"$2`,
+      /(<rect data-chart-background="true"[^>]*\/>)/,
+      `$1<rect width="100%" height="100%" fill="url(#theme-paper-${id})"/>`,
     );
   }
   return defs ? svg.replace("</svg>", `<defs>${defs}</defs></svg>`) : svg;

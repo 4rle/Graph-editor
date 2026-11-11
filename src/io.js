@@ -694,6 +694,15 @@ export function validateProject(project) {
       "showPoints",
       "showLegend",
       "themeTokens",
+      "pointSize",
+      "pointShape",
+      "lineStyle",
+      "showLabels",
+      "minorTicks",
+      "marginLeft",
+      "marginRight",
+      "marginTop",
+      "marginBottom",
     ];
     if (
       !isRecord(theme) ||

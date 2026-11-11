@@ -1,4 +1,10 @@
 import {
+  chartLayout,
+  chartOpening,
+  chartLegend,
+  markerSVG,
+} from "./theme-design.js";
+import {
   sampleCurve,
   expression,
   symbolic,
@@ -172,11 +178,11 @@ export function contourSVG(chart, width, height) {
   const cs = contours()
       .size([n, n])
       .thresholds(Number(chart.contourLevels || 10))(values),
-    left = 65,
-    top = 80,
-    w = width - 110,
-    h = height - 135;
-  let out = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" role="img" aria-label="${e(chart.title)}"><rect width="100%" height="100%" fill="${e(chart.background || "#ffffff")}"/><text x="${left}" y="35" fill="#333333" font-size="22">${e(chart.title)}</text>`;
+    layout = chartLayout(chart, width, height),
+    { left, right, top, bottom, scale } = layout,
+    w = right - left,
+    h = bottom - top;
+  let out = chartOpening(chart, width, height, layout);
   cs.forEach((c, i) => {
     const d = c.coordinates
       .flatMap((p) =>
@@ -191,13 +197,13 @@ export function contourSVG(chart, width, height) {
         ),
       )
       .join(" ");
-    out += `<path d="${d}" fill="${chart.filledContour ? "#777777" : "none"}" fill-opacity="${(i + 1) / (cs.length + 2)}" stroke="${e(chart.colors?.[i % chart.colors.length] || "#555555")}" stroke-width="1.2"><title>${c.value}</title></path>`;
+    out += `<path d="${d}" fill="${chart.filledContour ? "#777777" : "none"}" fill-opacity="${(i + 1) / (cs.length + 2)}" stroke="${e(chart.colors?.[i % chart.colors.length] || chart._theme.colors[0])}" stroke-width="${chart.lineWidth * scale}"><title>${c.value}</title></path>`;
   });
   for (let i = 0; i <= 5; i++)
-    out += `<text x="${left + (w * i) / 5}" y="${top + h + 22}" text-anchor="middle" font-size="12">${Number((x0 + ((x1 - x0) * i) / 5).toPrecision(4))}</text><text x="${left - 10}" y="${top + h - (h * i) / 5}" text-anchor="end" font-size="12">${Number((y0 + ((y1 - y0) * i) / 5).toPrecision(4))}</text>`;
+    out += `<text x="${left + (w * i) / 5}" y="${top + h + 22}" text-anchor="middle" font-size="${chart.fontSize * scale}">${Number((x0 + ((x1 - x0) * i) / 5).toPrecision(4))}</text><text x="${left - 10}" y="${top + h - (h * i) / 5}" text-anchor="end" font-size="${chart.fontSize * scale}">${Number((y0 + ((y1 - y0) * i) / 5).toPrecision(4))}</text>`;
   return (
     out +
-    `<rect x="${left}" y="${top}" width="${w}" height="${h}" fill="none" stroke="#888888"/></svg>`
+    `<rect x="${left}" y="${top}" width="${w}" height="${h}" fill="none" stroke="${e(chart.textColor)}" stroke-width="${chart._design.axisWidth * scale}"/></svg>`
   );
 }
 export function compositeSVG(chart, sheets, getData, width, height) {
@@ -205,13 +211,9 @@ export function compositeSVG(chart, sheets, getData, width, height) {
     visible = data.series
       .map((s, i) => ({ ...s, i }))
       .filter((s) => !chart.seriesHidden?.includes(s.i)),
-    colors = chart.colors?.length
-      ? chart.colors
-      : ["#587da5", "#b27a48", "#76956e"],
-    left = 70,
-    right = width - 75,
-    top = 85,
-    bottom = height - 65,
+    colors = chart.colors?.length ? chart.colors : chart._theme.colors,
+    layout = chartLayout(chart, width, height),
+    { left, right, top, bottom, scale } = layout,
     pw = right - left,
     ph = bottom - top;
   const xs = visible.flatMap((s) => s.points.map((p) => p.x)),
@@ -229,10 +231,15 @@ export function compositeSVG(chart, sheets, getData, width, height) {
   const sx = (x) => left + ((x - xmin) / (xmax - xmin || 1)) * pw,
     sy = (y, g) =>
       bottom - ((y - ranges[g][0]) / (ranges[g][1] - ranges[g][0] || 1)) * ph;
-  let svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" aria-label="${e(chart.title)}"><rect width="100%" height="100%" fill="${e(chart.background || "#ffffff")}"/><text x="${left}" y="34" font-size="22" fill="#333333">${e(chart.title)}</text>`;
+  let svg = chartOpening(chart, width, height, layout);
+  svg += chartLegend(
+    chart,
+    visible.map((s) => ({ ...s, color: colors[s.i % colors.length] })),
+    layout,
+  );
   for (let i = 0; i <= 5; i++) {
     const y = top + (ph * i) / 5;
-    svg += `<path d="M${left} ${y}H${right}" stroke="#dddddd"/><text x="${left - 10}" y="${y + 4}" text-anchor="end" font-size="12">${Number((ranges[0][1] - ((ranges[0][1] - ranges[0][0]) * i) / 5).toPrecision(4))}</text><text x="${right + 10}" y="${y + 4}" font-size="12">${Number((ranges[1][1] - ((ranges[1][1] - ranges[1][0]) * i) / 5).toPrecision(4))}</text>`;
+    svg += `${chart.showGrid !== false ? `<path class="chart-grid" d="M${left} ${y}H${right}" stroke="${chart._theme.grid}" stroke-width="${chart._design.gridWidth * scale}" stroke-dasharray="${chart._design.gridDash}"/>` : ""}<text x="${left - 10}" y="${y + 4}" text-anchor="end" font-size="${chart.fontSize * scale}">${Number((ranges[0][1] - ((ranges[0][1] - ranges[0][0]) * i) / 5).toPrecision(4))}</text><text x="${right + 10}" y="${y + 4}" font-size="${chart.fontSize * scale}">${Number((ranges[1][1] - ((ranges[1][1] - ranges[1][0]) * i) / 5).toPrecision(4))}</text>`;
   }
   visible.forEach((s) => {
     const g = rightSeries.includes(s.i) ? 1 : 0,
@@ -241,18 +248,20 @@ export function compositeSVG(chart, sheets, getData, width, height) {
         chart.seriesTypes?.[s.i] ||
         (s.i === 0 && chart.type === "combo" ? "bar" : "line");
     if (type === "bar") {
-      const w = (pw / Math.max(1, s.points.length)) * 0.6;
+      const w = (pw / Math.max(1, s.points.length)) * chart._design.barRatio;
       s.points.forEach(
         (p) =>
-          (svg += `<rect x="${sx(p.x) - w / 2}" y="${Math.min(sy(p.y, g), sy(0, g))}" width="${w}" height="${Math.abs(sy(p.y, g) - sy(0, g))}" fill="${e(color)}"/>`),
+          (svg += `<rect class="chart-bar" rx="${chart._design.barRadius * scale}" stroke="${e(chart.textColor)}" stroke-width="${chart._design.outlineWidth * scale}" x="${sx(p.x) - w / 2}" y="${Math.min(sy(p.y, g), sy(0, g))}" width="${w}" height="${Math.abs(sy(p.y, g) - sy(0, g))}" fill="${e(color)}"/>`),
       );
     } else {
-      svg += `<path d="${s.points.map((p, i) => `${i ? "L" : "M"}${sx(p.x)} ${sy(p.y, g)}`).join(" ")}" stroke="${e(color)}" stroke-width="${chart.lineWidth || 3}" fill="none"/>`;
+      svg += `<path class="chart-series-line" stroke-linecap="${chart._design.lineCap}" stroke-linejoin="${chart._design.lineJoin}" d="${s.points.map((p, i) => `${i ? "L" : "M"}${sx(p.x)} ${sy(p.y, g)}`).join(" ")}" stroke="${e(color)}" stroke-width="${chart.lineWidth * scale}" fill="none"/>`;
     }
-    svg += `<text x="${left + s.i * 130}" y="58" font-size="12" fill="${e(color)}">${e(s.name)}${g ? " (右軸)" : ""}</text>`;
+    if (chart.showPoints !== false && type !== "bar")
+      for (const p of s.points)
+        svg += markerSVG(chart, sx(p.x), sy(p.y, g), color, "", "", s.i, scale);
   });
   for (let i = 0; i <= 5; i++)
-    svg += `<text x="${left + (pw * i) / 5}" y="${bottom + 25}" text-anchor="middle" font-size="12">${Number((xmin + ((xmax - xmin) * i) / 5).toPrecision(4))}</text>`;
+    svg += `<text x="${left + (pw * i) / 5}" y="${bottom + 25}" text-anchor="middle" font-size="${chart.fontSize * scale}">${Number((xmin + ((xmax - xmin) * i) / 5).toPrecision(4))}</text>`;
   return svg + "</svg>";
 }
 export function decorateSVG(svg, chart, width, height) {

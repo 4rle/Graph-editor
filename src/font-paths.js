@@ -65,7 +65,14 @@ export async function outlineText(svg) {
         y += Number(line.getAttribute("dy") || 0);
       }
       const run = font.layout(line.textContent),
-        width = run.positions.reduce((a, p) => a + p.xAdvance, 0) * scale;
+        spacing = Number(
+          line.getAttribute("letter-spacing") ||
+            text.getAttribute("letter-spacing") ||
+            0,
+        ),
+        width =
+          run.positions.reduce((a, p) => a + p.xAdvance, 0) * scale +
+          Math.max(0, run.glyphs.length - 1) * spacing;
       let cursor =
         x - (anchor === "middle" ? width / 2 : anchor === "end" ? width : 0);
       for (let i = 0; i < run.glyphs.length; i++) {
@@ -78,7 +85,7 @@ export async function outlineText(svg) {
           `translate(${cursor + pos.xOffset * scale} ${y - pos.yOffset * scale}) scale(${scale} ${-scale})`,
         );
         group.append(path);
-        cursor += pos.xAdvance * scale;
+        cursor += pos.xAdvance * scale + spacing;
       }
     }
     text.replaceWith(group);

@@ -47,6 +47,7 @@ try {
     "browser-workflows",
     "browser-advanced",
     "browser-deployment",
+    "browser-themes",
   ]) {
     console.log(`Cloudflare runtime: ${script}`);
     await new Promise((resolve, reject) => {

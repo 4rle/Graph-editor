@@ -1,3 +1,10 @@
+import {
+  resolveChartTheme,
+  chartLayout,
+  chartOpening,
+  chartLegend,
+  markerSVG,
+} from "./theme-design.js";
 import { themeEffects } from "./theme-effects.js";
 import { extraThemes } from "./extra-themes.js";
 import {
@@ -289,7 +296,7 @@ function baseRenderChart(
   sheets,
   { width = 900, height = 520, interactive = true } = {},
 ) {
-  const theme = themes.find((t) => t.id === chart.theme) || themes[0];
+  const theme = chart._theme;
   const bg = chart.background || theme.bg,
     fg = chart.textColor || theme.fg,
     muted = theme.muted;
@@ -300,28 +307,20 @@ function baseRenderChart(
   const visible = data.series
     .map((s, i) => ({ ...s, index: i, color: colors[i % colors.length] }))
     .filter((s) => !hidden.includes(s.index) && !hidden.includes(s.name));
-  const font = chart.fontFamily || theme.font;
-  const fs = n(chart.fontSize, 12),
-    lw = n(chart.lineWidth, theme.lineWidth || 3),
-    pointSize = n(chart.pointSize, theme.pointSize || 4);
-  const left = Number(chart.marginLeft ?? Math.max(62, width * 0.085)),
-    right = width - Number(chart.marginRight ?? 38),
-    top = Number(chart.marginTop ?? (height < 300 ? 65 : 100)),
-    bottom = height - Number(chart.marginBottom ?? (chart.xLabel ? 64 : 45));
+  const design = chart._design;
+  const layout = chartLayout(chart, width, height),
+    { left, right, top, bottom, scale } = layout;
+  const fs = chart.fontSize * scale,
+    lw = chart.lineWidth * scale;
   const pw = right - left,
-    ph = Math.max(50, bottom - top);
+    ph = Math.max(50 * scale, bottom - top);
   const text = (x, y, value, attr = "") =>
     `<text x="${x}" y="${y}" ${attr}>${esc(value)}</text>`;
-  const title = chart.title || "名称未設定のグラフ";
-  let svg = `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" role="img" aria-label="${esc(title)}" class="chart-svg" style="font-family:${esc(font)};font-size:${fs}px"><rect width="${width}" height="${height}" fill="${chart.transparent ? "none" : esc(bg)}"/><defs><clipPath id="plot-${id}"><rect x="${left}" y="${top}" width="${pw}" height="${ph}"/></clipPath></defs><g fill="${esc(fg)}">${text(left, 38, title, `font-size="${Math.min(23, width / 30)}" font-weight="600" data-chart-title="true"`)}${chart.subtitle ? text(left, 60, chart.subtitle, `fill="${muted}" font-size="${fs - 1}"`) : ""}</g>`;
-  if (chart.showLegend !== false) {
-    let lx = left;
-    const ly = height < 300 ? 58 : 78;
-    visible.forEach((s) => {
-      svg += `<g data-series-index="${s.index}" style="cursor:pointer"><rect x="${lx}" y="${ly - 7}" width="15" height="3" rx="1.5" fill="${esc(s.color)}"/>${text(lx + 22, ly - 2, s.name, `fill="${muted}" font-size="${fs - 1}"`)}</g>`;
-      lx += Math.max(95, String(s.name).length * (fs - 1) * 0.7 + 43);
-    });
-  }
+  let svg =
+    chartOpening(chart, width, height, layout) +
+    `<defs><clipPath id="plot-${id}"><rect x="${left}" y="${top}" width="${pw}" height="${ph}"/></clipPath></defs>`;
+  svg += chartLegend(chart, visible, layout);
+  let markers = "";
   const type = chart.type || "line";
   if (
     !visible.some((s) => s.points.length) &&
@@ -378,9 +377,9 @@ function baseRenderChart(
       let d = full
         ? `M${cx},${cy - r} A${r},${r} 0 1 1 ${cx - 0.001},${cy - r} Z`
         : `M${cx},${cy} L${sx},${sy} A${r},${r} 0 ${delta > Math.PI ? 1 : 0} 1 ${ex},${ey} Z`;
-      svg += `<path d="${d}" fill="${esc(colors[i % colors.length])}" stroke="${esc(bg)}" stroke-width="3" ${pointAttr(s, p, i)}>${tooltip(s, p)}</path>`;
+      svg += `<path d="${d}" fill="${esc(colors[i % colors.length])}" stroke="${esc(design.outlineWidth ? fg : bg)}" stroke-width="${(design.outlineWidth || 3) * scale}" ${pointAttr(s, p, i)}>${tooltip(s, p)}</path>`;
       const ly = top + 15 + i * 25;
-      svg += `<rect x="${width * 0.73}" y="${ly - 9}" width="8" height="8" rx="2" fill="${esc(colors[i % colors.length])}"/>${text(width * 0.73 + 16, ly, p.label, `fill="${muted}" font-size="${fs - 1}"`)}${text(width - 35, ly, `${((p.y / total) * 100).toFixed(1)}%`, `text-anchor="end" fill="${fg}" font-size="${fs - 1}"`)}`;
+      svg += `<rect x="${width * 0.73}" y="${ly - 9}" width="8" height="8" rx="2" fill="${esc(colors[i % colors.length])}"/>${text(width * 0.73 + 16, ly, p.label, `fill="${muted}" font-size="${Math.max(4, fs - scale)}"`)}${text(width - 35, ly, `${((p.y / total) * 100).toFixed(1)}%`, `text-anchor="end" fill="${fg}" font-size="${Math.max(4, fs - scale)}"`)}`;
       angle = end;
     });
     if (inner)
@@ -797,26 +796,37 @@ function baseRenderChart(
   if (chart.showGrid !== false) {
     for (const y of yTicks) {
       if (log ? y < loglo || y > loghi : y < ylo || y > yhi) continue;
-      svg += `<path d="M${left},${sy(y)}H${right}" fill="none" stroke="${theme.grid}" stroke-width="1"/>`;
+      svg += `<path d="M${left},${sy(y)}H${right}" fill="none" stroke="${theme.grid}" stroke-width="${design.gridWidth * scale}" stroke-dasharray="${design.gridDash}" stroke-linecap="round" class="chart-grid"/>`;
     }
+  }
+  if (chart.showGrid !== false && design.grid === "both")
+    for (const x of xt)
+      svg += `<path class="chart-grid" d="M${sx(x)},${top}V${bottom}" stroke="${theme.grid}" stroke-width="${design.gridWidth * scale}" stroke-dasharray="${design.gridDash}" fill="none"/>`;
+  if (design.ticks) {
+    for (const y of yTicks)
+      if (log ? y >= loglo && y <= loghi : y >= ylo && y <= yhi)
+        svg += `<path class="chart-tick" d="M${left},${sy(y)}h${5 * scale}" stroke="${esc(fg)}" stroke-width="${scale}"/>`;
+    for (const x of xt)
+      svg += `<path class="chart-tick" d="M${sx(x)},${bottom}v${-5 * scale}" stroke="${esc(fg)}" stroke-width="${scale}"/>`;
   }
   for (const y of yTicks) {
     if (log ? y < loglo || y > loghi : y < ylo || y > yhi) continue;
     svg += text(
-      left - 13,
-      sy(y) + 4,
+      left - 13 * scale,
+      sy(y) + 4 * scale,
       fmt(y),
-      `fill="${muted}" text-anchor="end" font-size="${fs - 1}"`,
+      `fill="${muted}" text-anchor="end" font-size="${Math.max(4, fs - scale)}"`,
     );
   }
-  svg += `<path d="M${left},${bottom}H${right}" stroke="${theme.grid}" fill="none"/>`;
+  if (design.axisWidth > 0)
+    svg += `<path class="chart-axis" d="M${left},${bottom}H${right}${["left-bottom", "frame"].includes(design.axes) ? ` M${left},${bottom}V${top}` : ""}${design.axes === "frame" ? `H${right}V${bottom}` : ""}" stroke="${esc(fg)}" stroke-width="${design.axisWidth * scale}" fill="none"/>`;
   if (type === "box")
     visible.forEach((s, i) => {
       svg += text(
         sx(i + 1),
-        bottom + 22,
+        bottom + 22 * scale,
         s.name,
-        `fill="${muted}" text-anchor="middle" font-size="${fs - 1}"`,
+        `fill="${muted}" text-anchor="middle" font-size="${Math.max(4, fs - scale)}"`,
       );
     });
   else if (categorical) {
@@ -826,24 +836,24 @@ function baseRenderChart(
       if (i % stride === 0)
         svg += text(
           sx(i + 1),
-          bottom + 22,
+          bottom + 22 * scale,
           label,
-          `fill="${muted}" text-anchor="middle" font-size="${fs - 1}"`,
+          `fill="${muted}" text-anchor="middle" font-size="${Math.max(4, fs - scale)}"`,
         );
     });
   } else
     xt.forEach((x) => {
       svg += text(
         sx(x),
-        bottom + 22,
+        bottom + 22 * scale,
         fmt(x),
-        `fill="${muted}" text-anchor="middle" font-size="${fs - 1}"`,
+        `fill="${muted}" text-anchor="middle" font-size="${Math.max(4, fs - scale)}"`,
       );
     });
   if (chart.xLabel)
     svg += text(
       (left + right) / 2,
-      height - 14,
+      height - 14 * scale,
       chart.xLabel,
       `fill="${fg}" text-anchor="middle" font-size="${fs}"`,
     );
@@ -867,7 +877,7 @@ function baseRenderChart(
     visible.forEach((s, j) =>
       s.points.forEach((p, i) => {
         const opacity = 0.12 + (0.88 * (p.y - min)) / (max - min || 1);
-        svg += `<rect x="${left + i * cw + 1}" y="${top + j * ch + 1}" width="${cw - 2}" height="${ch - 2}" rx="3" fill="${esc(s.color)}" opacity="${opacity}" ${pointAttr(s, p, i)}>${tooltip(s, p)}</rect>${text(left + (i + 0.5) * cw, top + (j + 0.5) * ch + 4, fmt(p.y), `text-anchor="middle" fill="${p.y - min > (max - min) * 0.6 ? "white" : fg}" font-size="${fs}"`)}`;
+        svg += `<rect x="${left + i * cw + 1}" y="${top + j * ch + 1}" width="${cw - 2}" height="${ch - 2}" rx="${design.barRadius * scale}" fill="${esc(s.color)}" opacity="${opacity}" ${pointAttr(s, p, i)}>${tooltip(s, p)}</rect>${text(left + (i + 0.5) * cw, top + (j + 0.5) * ch + 4, fmt(p.y), `text-anchor="middle" fill="${p.y - min > (max - min) * 0.6 ? "white" : fg}" font-size="${fs}"`)}`;
       }),
     );
   } else if (type === "box") {
@@ -893,7 +903,7 @@ function baseRenderChart(
       if (["bar", "histogram", "stacked"].includes(type)) {
         const slot = pw / Math.max(1, pts.length),
           count = type === "stacked" ? 1 : plotSeries.length,
-          w = (slot * 0.65) / count;
+          w = (slot * design.barRatio) / count;
         pts.forEach((p, i) => {
           let base = 0;
           if (type === "stacked") {
@@ -903,23 +913,39 @@ function baseRenderChart(
           }
           const x =
             sx(p.x) -
-            slot * 0.325 +
+            (slot * design.barRatio) / 2 +
             (type === "stacked"
               ? 0
               : plotSeries.findIndex((v) => v.index === s.index) * w);
           const yy = sy(base + p.y),
             b = sy(log ? Math.max(loglo, base) : base);
-          svg += `<rect x="${x}" y="${Math.min(yy, b)}" width="${Math.max(1, w - 2)}" height="${Math.abs(b - yy)}" rx="${type === "stacked" ? 0 : 2}" fill="${esc(s.color)}" ${pointAttr(s, p, i)}>${tooltip(s, p)}</rect>`;
+          svg += `<rect class="chart-bar" x="${x}" y="${Math.min(yy, b)}" width="${Math.max(1, w - 2)}" height="${Math.abs(b - yy)}" rx="${type === "stacked" ? 0 : design.barRadius * scale}" fill="${esc(s.color)}" stroke="${esc(fg)}" stroke-width="${design.outlineWidth * scale}" ${pointAttr(s, p, i)}>${tooltip(s, p)}</rect>`;
         });
       } else {
         const d = linePath(pts, sx, sy);
         if (type === "area" && pts.length)
-          svg += `<path d="${d} L${sx(pts.at(-1).x)},${sy(log ? loglo : 0)} L${sx(pts[0].x)},${sy(log ? loglo : 0)} Z" fill="${esc(s.color)}" fill-opacity=".11"/>`;
+          svg += `<path d="${d} L${sx(pts.at(-1).x)},${sy(log ? loglo : 0)} L${sx(pts[0].x)},${sy(log ? loglo : 0)} Z" fill="${esc(s.color)}" fill-opacity="${design.areaOpacity}"/>`;
         if (type !== "scatter")
-          svg += `<path d="${d}" fill="none" stroke="${esc(s.color)}" stroke-width="${lw}" stroke-linecap="round" stroke-linejoin="round" ${chart.lineStyle === "dashed" ? 'stroke-dasharray="8 5"' : ""}/>`;
+          svg += `<path class="chart-series-line" d="${d}" fill="none" stroke="${esc(s.color)}" stroke-width="${lw}" stroke-linecap="${design.lineCap}" stroke-linejoin="${design.lineJoin}" ${chart.lineStyle === "dashed" ? 'stroke-dasharray="8 5"' : ""}/>`;
         if (chart.showPoints !== false || type === "scatter")
           pts.forEach((p, i) => {
-            svg += `<${chart.pointShape === "square" ? "rect" : "circle"} ${chart.pointShape === "square" ? `x="${sx(p.x) - pointSize}" y="${sy(p.y) - pointSize}" width="${pointSize * 2}" height="${pointSize * 2}"` : `cx="${sx(p.x)}" cy="${sy(p.y)}" r="${pointSize}"`} fill="${esc(s.color)}" stroke="${esc(bg)}" stroke-width="2" ${pointAttr(s, p, i)}>${tooltip(s, p)}</${chart.pointShape === "square" ? "rect" : "circle"}>`;
+            if (
+              sx(p.x) < left ||
+              sx(p.x) > right ||
+              sy(p.y) < top ||
+              sy(p.y) > bottom
+            )
+              return;
+            markers += markerSVG(
+              chart,
+              sx(p.x),
+              sy(p.y),
+              s.color,
+              pointAttr(s, p, i),
+              tooltip(s, p),
+              s.index,
+              scale,
+            );
           });
         if (chart.showLabels)
           pts.forEach((p) => {
@@ -968,6 +994,7 @@ function baseRenderChart(
       svg += `<path d="${d}" fill="none" stroke="${esc(o.color)}" stroke-width="${lw}" ${o.dashed ? 'stroke-dasharray="7 5"' : ""}/>`;
     });
   svg += "</g>";
+  svg += markers;
   overlays
     .filter((o) => o.type === "coordinate" && (!log || o.point.y > 0))
     .forEach((o) => {
@@ -983,7 +1010,7 @@ function baseRenderChart(
     .filter((o) => o.type !== "coordinate")
     .forEach((o, i) => {
       if (o.label)
-        svg += `<rect x="${left + 10}" y="${top + 10 + i * 24}" width="${Math.min(pw - 20, o.label.length * (fs - 1) * 0.65 + 20)}" height="22" fill="${esc(bg)}" opacity=".92" rx="3"/>${text(left + 18, top + 25 + i * 24, o.label, `fill="${esc(o.color)}" font-size="${fs - 1}"`)}`;
+        svg += `<rect x="${left + 10}" y="${top + 10 + i * 24}" width="${Math.min(pw - 20, o.label.length * (fs - 1) * 0.65 + 20)}" height="22" fill="${esc(bg)}" opacity=".92" rx="3"/>${text(left + 18, top + 25 + i * 24, o.label, `fill="${esc(o.color)}" font-size="${Math.max(4, fs - scale)}"`)}`;
     });
   (chart.annotations || [])
     .filter((a) => !a.hidden)
@@ -1009,15 +1036,22 @@ function baseRenderChart(
 export function renderChart(original, sheets, options = {}) {
   const width = options.width || 900,
     height = options.height || 520;
-  const prepared = prepareChart(original, sheets, getChartData),
+  const theme = themes.find((t) => t.id === original.theme) || themes[0];
+  const themed = resolveChartTheme(original, theme);
+  const prepared = prepareChart(themed, sheets, getChartData),
     chart = {
       ...prepared.chart,
-      id: prepared.chart.id + "-" + width + "x" + height,
+      id:
+        String(prepared.chart.id || "chart").replace(/[^a-zA-Z0-9_-]/g, "") +
+        "-" +
+        width +
+        "x" +
+        height,
     };
   let svg;
   if (chart.type === "contour") svg = contourSVG(chart, width, height);
   else if (["combo", "dual"].includes(chart.type))
     svg = compositeSVG(chart, prepared.sheets, getChartData, width, height);
   else svg = baseRenderChart(chart, prepared.sheets, options);
-  return decorateSVG(themeEffects(svg, original), original, width, height);
+  return decorateSVG(themeEffects(svg, chart), original, width, height);
 }

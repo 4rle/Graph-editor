@@ -109,3 +109,36 @@ export const extraThemes = groups.flatMap(([category, names], g) =>
     };
   }),
 );
+
+// Palettes remain one component of a theme; geometry lives in theme-design.js.
+const individual = {
+  "flat-design": {
+    colors: ["#3f77d8", "#e38b3c", "#299c86", "#b166a0", "#949e40"],
+  },
+  "kawaii-minimal": {
+    bg: "#fff5f8",
+    fg: "#4e3946",
+    muted: "#806a78",
+    grid: "#ead7df",
+    colors: ["#dc7e9b", "#89a8ce", "#79b5a5", "#d5ad66", "#ad96cb"],
+  },
+  "candy-color": {
+    bg: "#fffaf2",
+    fg: "#43394f",
+    muted: "#7d7187",
+    grid: "#eaddf0",
+    colors: ["#dc6a9a", "#579fc4", "#bd9a44", "#8f7bc4", "#68aa8e"],
+  },
+  cyberpunk: {
+    bg: "#171a2a",
+    fg: "#f3f5ff",
+    muted: "#a0a8c9",
+    grid: "#343750",
+    colors: ["#51e1cf", "#f18ccf", "#e5ce6c", "#9d9ff0", "#7ebce9"],
+  },
+  "grayscale-scientific": {
+    colors: ["#222222", "#555555", "#888888", "#444444", "#aaaaaa"],
+  },
+};
+for (const theme of extraThemes)
+  Object.assign(theme, individual[theme.id] || {});
