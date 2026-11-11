@@ -1,35 +1,46 @@
 {
   "name": "plot-graph-studio",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "node server.js",
     "start": "node server.js",
     "test": "node --test --test-isolation=none tests/*.test.js",
-    "check": "node --check src/app.js && node --check src/chart.js && node --check src/engine.js && node --check src/io.js && node --check src/enhancements.js && node --check src/advanced-chart.js && node --check src/science.js && node --check src/objects.js && node --check src/sheet-tools.js && node --check src/font-paths.js && node --check src/xlsx-charts.js",
+    "check": "node --check src/app.js && node --check src/chart.js && node --check src/engine.js && node --check src/io.js && node --check src/enhancements.js && node --check src/advanced-chart.js && node --check src/science.js && node --check src/objects.js && node --check src/sheet-tools.js && node --check src/font-paths.js && node --check src/xlsx-charts.js && node --check src/bootstrap.js && node --check src/native-workbook.js && node --check src/vector-geometry.js && node --check src/color-management.js && node --check src/canvas-interactions.js && node --check src/workbook-adapter.js",
     "test:browser": "node tests/browser-smoke.mjs && node tests/browser-workflows.mjs && node tests/browser-advanced.mjs",
     "build": "node build.mjs",
     "prestart": "npm run build",
-    "predev": "npm run build"
+    "predev": "npm run build",
+    "pretest": "npm run build",
+    "deploy": "npm run build && wrangler deploy",
+    "dev:cloudflare": "npm run build && wrangler dev --local",
+    "test:deployment": "node tests/verify-deployment.mjs",
+    "pretest:deployment": "npm run build"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=22.12.0"
   },
   "devDependencies": {
     "esbuild": "0.25.12",
-    "playwright": "1.57.0"
+    "playwright": "1.57.0",
+    "wrangler": "4.160.0"
   },
   "dependencies": {
     "@formulajs/formulajs": "4.5.6",
+    "@fortune-sheet/react": "1.0.4",
     "d3-contour": "4.0.2",
     "fontkit": "2.0.4",
     "jspdf": "3.0.3",
     "katex": "0.16.22",
+    "lcms-wasm": "1.0.5",
     "mathjax-full": "3.2.2",
     "mathjs": "14.8.1",
     "nerdamer": "1.1.13",
+    "paper": "0.12.18",
     "polygon-clipping": "0.15.7",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
     "svg2pdf.js": "2.6.0"
   }
 }

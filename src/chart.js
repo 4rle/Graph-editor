@@ -344,7 +344,7 @@ function baseRenderChart(
     `<title>${esc(`${s.name} · ${p.label || fmt(p.x)}: ${fmt(p.y)}`)}</title>`;
   const pointAttr = (s, p, i) =>
     interactive
-      ? `data-point-index="${i}" data-series-index="${s.index}" data-row="${p.row ?? ""}" data-col="${p.col ?? ""}" style="cursor:crosshair" tabindex="0" role="button" aria-label="${esc(s.name + " " + p.label + " " + p.y)}"`
+      ? `data-point-index="${Math.max(0, s.points.indexOf(p))}" data-series-index="${s.index}" data-row="${p.row ?? ""}" data-col="${p.col ?? ""}" style="cursor:crosshair" tabindex="0" role="button" aria-label="${esc(s.name + " " + p.label + " " + p.y)}"`
       : "";
 
   if (type === "pie" || type === "donut") {
@@ -697,6 +697,28 @@ function baseRenderChart(
       /* An invalid expression is reported by the inspector; valid data remains visible. */
     }
   }
+  if (chart.errorBars || n(chart.errorAmount) > 0 || chart.errorRange)
+    for (const series of plotSeries)
+      for (const p of series.points) {
+        let error = chart.errorRange
+          ? Math.abs(
+              Number(
+                evalCell(
+                  sheets,
+                  chart.sheetId,
+                  p.row,
+                  parseRef(chart.errorRange.split(":")[0]).col,
+                ),
+              ),
+            )
+          : n(chart.errorAmount) > 0
+            ? n(chart.errorAmount)
+            : (Math.abs(p.y) * n(chart.errorPercent, 5)) / 100;
+        if (Number.isFinite(error)) {
+          yMin = Math.min(yMin, p.y - error);
+          yMax = Math.max(yMax, p.y + error);
+        }
+      }
   if (chart.yMin !== null && chart.yMin !== undefined && chart.yMin !== "")
     yMin = n(chart.yMin, yMin);
   if (chart.yMax !== null && chart.yMax !== undefined && chart.yMax !== "")
@@ -908,7 +930,7 @@ function baseRenderChart(
               `fill="${esc(s.color)}" text-anchor="middle" font-size="${fs - 2}"`,
             );
           });
-        if (chart.errorBars || n(chart.errorAmount) > 0)
+        if (chart.errorBars || n(chart.errorAmount) > 0 || chart.errorRange)
           pts.forEach((p) => {
             const error = chart.errorRange
                 ? Math.abs(
@@ -927,6 +949,7 @@ function baseRenderChart(
               y1 = sy(log ? Math.max(loglo, p.y - error) : p.y - error),
               y2 = sy(p.y + error),
               x = sx(p.x);
+            if (!Number.isFinite(error)) return;
             svg += `<path d="M${x},${y1}V${y2} M${x - 4},${y1}h8 M${x - 4},${y2}h8" stroke="${esc(s.color)}" stroke-width="1.2" fill="none"/>`;
           });
       }
@@ -976,6 +999,10 @@ function baseRenderChart(
         `fill="${esc(a.color || fg)}" font-size="${n(a.fontSize, fs + 2)}" data-annotation-id="${esc(a.id)}" style="cursor:move"`,
       );
     });
+  svg = svg.replace(
+    "<svg ",
+    `<svg data-plot-left="${left}" data-plot-right="${right}" data-plot-top="${top}" data-plot-bottom="${bottom}" data-x-min="${logX ? logXlo : xMin}" data-x-max="${logX ? logXhi : xMax}" data-y-min="${log ? loglo : ylo}" data-y-max="${log ? loghi : yhi}" data-y-log="${log}" data-x-log="${logX}" `,
+  );
   return svg + "</svg>";
 }
 

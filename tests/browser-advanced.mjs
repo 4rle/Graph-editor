@@ -31,6 +31,34 @@ const neutral = await page
     }),
   );
 assert.equal(neutral, true);
+for (const id of [
+  "chart",
+  "data",
+  "math",
+  "geometry",
+  "typography",
+  "layers",
+  "axes",
+  "analysis",
+  "history",
+  "settings",
+]) {
+  await page.locator(`[data-tool="${id}"]`).click();
+  const controlsNeutral = await page
+    .locator(
+      ".studio-shell .panel-heading button,.studio-shell .checkbox-row,.studio-shell .grid-pages,.studio-shell input[type=color]",
+    )
+    .evaluateAll((nodes) =>
+      nodes.every((node) => {
+        const style = getComputedStyle(node);
+        return ["color", "borderTopColor"].every((property) => {
+          const rgb = style[property].match(/[\d.]+/g);
+          return !rgb || (rgb[0] === rgb[1] && rgb[1] === rgb[2]);
+        });
+      }),
+    );
+  assert.equal(controlsNeutral, true, id + " controls must be neutral");
+}
 console.log("PASS headerless neutral editor and no promotional copy");
 const tool = (id) => page.locator(`[data-tool="${id}"]`).click();
 await tool("chart");
@@ -76,9 +104,23 @@ console.log("PASS LaTeX converted to true SVG glyphs");
 await tool("settings");
 await page.locator('select[name="layout-properties"]').selectOption("float");
 assert.equal(await page.locator(".studio-inspector.managed-float").count(), 1);
-await page.locator('.studio-panel .panel-heading').evaluate(source=>{const transfer=new DataTransfer();transfer.setData('text/plot-panel','tools');const target=document.querySelector('.studio-inspector .panel-heading'),box=target.getBoundingClientRect();target.dispatchEvent(new DragEvent('drop',{bubbles:true,cancelable:true,dataTransfer:transfer,clientX:box.left+box.width/2,clientY:box.top+box.height-2}));});
-assert.equal(await page.locator('.panel-split').count(),1);
-console.log('PASS docking relative to another panel');
+await page.locator(".studio-panel .panel-heading").evaluate((source) => {
+  const transfer = new DataTransfer();
+  transfer.setData("text/plot-panel", "tools");
+  const target = document.querySelector(".studio-inspector .panel-heading"),
+    box = target.getBoundingClientRect();
+  target.dispatchEvent(
+    new DragEvent("drop", {
+      bubbles: true,
+      cancelable: true,
+      dataTransfer: transfer,
+      clientX: box.left + box.width / 2,
+      clientY: box.top + box.height - 2,
+    }),
+  );
+});
+assert.equal(await page.locator(".panel-split").count(), 1);
+console.log("PASS docking relative to another panel");
 await page.locator('[data-adv="layout-save"]').click();
 await page.reload();
 await page.locator('[data-action="view-studio"]').first().click();

@@ -11,6 +11,9 @@
 | PDF                  | jsPDF / svg2pdf.js                       | MIT                       |
 | 等高線               | d3-contour                               | ISC                       |
 | 図形演算             | polygon-clipping                         | MIT                       |
+| 曲線・パス演算       | Paper.js                                 | MIT                       |
+| 標準表計算編集       | Fortune Sheet / React / React DOM        | MIT                       |
+| ICC色変換            | lcms-wasm / LittleCMS                    | MIT                       |
 | フォント解析         | fontkit                                  | MIT                       |
 | 出力用フォント       | Noto CJK のJP・Sans/Serif/Monoサブセット | SIL Open Font License 1.1 |
 

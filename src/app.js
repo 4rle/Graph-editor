@@ -1,3 +1,8 @@
+import {
+  initializeCanvasEditing,
+  highlightSelectedData,
+} from "./canvas-interactions.js";
+let nativeWorkbookModule;
 import { outlineText } from "./font-paths.js";
 import { installSheetTools, conditionalStyle } from "./sheet-tools.js";
 import {
@@ -155,11 +160,19 @@ function makeDemo() {
 let storageOK = true,
   restored = false,
   project;
+let startupRecovery = false;
 try {
   let saved = localStorage.getItem("plot-project-v1");
   project = saved ? parseProject(saved) : makeDemo();
   restored = !!saved;
 } catch {
+  try {
+    const original = localStorage.getItem("plot-project-v1");
+    if (original) {
+      localStorage.setItem("plot-project-v1-recovery", original);
+      startupRecovery = true;
+    }
+  } catch {}
   project = makeDemo();
 }
 const ui = {
@@ -317,6 +330,9 @@ function menuDropdown() {
       ["new-project", "新しいプロジェクト", "file"],
       ["import", "ファイルを読み込む", "upload"],
       ["save-project", "プロジェクトを保存", "save"],
+      ...(startupRecovery
+        ? [["recover-project", "元の保存データを書き出す", "download"]]
+        : []),
       ["export", "エクスポート", "download"],
     ],
     [
@@ -330,6 +346,7 @@ function menuDropdown() {
       ["view-studio", "Graph Studio", "chart"],
       ["toggle-inspector", "インスペクター切替", "settings"],
       ["fullscreen", "全画面表示", "expand"],
+      ["native-workbook", "表を詳細編集", "grid"],
     ],
     [
       ["insert-chart", "選択範囲からグラフ", "chart"],
@@ -412,13 +429,21 @@ function columnOffset(c) {
   for (let i = 0; i < c; i++) n += columnWidth(i);
   return n;
 }
+let extentMemo;
 function gridExtent() {
-  const sh = currentSheet(),
-    ps = Object.keys(sh.cells).map(parseRef);
-  return {
-    rows: Math.min(1048576, Math.max(2000, ...ps.map((p) => p.row + 200))),
-    cols: Math.min(16384, Math.max(100, ...ps.map((p) => p.col + 20))),
-  };
+  const sh = currentSheet();
+  if (extentMemo?.sheet === sh && extentMemo?.pass === ui.renderPassId)
+    return extentMemo.value;
+  let rows = 2000,
+    cols = 100;
+  for (const ref of Object.keys(sh.cells)) {
+    const p = parseRef(ref);
+    rows = Math.max(rows, p.row + 200);
+    cols = Math.max(cols, p.col + 20);
+  }
+  const value = { rows: Math.min(1048576, rows), cols: Math.min(16384, cols) };
+  extentMemo = { sheet: sh, pass: ui.renderPassId, value };
+  return value;
 }
 function gridMarkup(compact = false) {
   const sheet = currentSheet(),
@@ -585,7 +610,7 @@ function studioView() {
     )
     .join(
       "",
-    )}</nav><aside class="studio-panel ${ui.floatPanel ? "floating-panel" : ""}" style="${ui.floatPanel ? `left:${ui.panelPos.x}px;top:${ui.panelPos.y}px;` : ""}width:${ui.panelWidth}px"><div class="panel-heading panel-drag-handle"><h2>${toolItems.find((t) => t[0] === ui.tool)?.[2] || "グラフ"}</h2><div>${btn("close-panel", "", "close", "icon-button mobile-panel-close", 'aria-label="パネルを閉じる"')}${ui.pro ? btn("float-panel", "", "expand", "icon-button", 'aria-label="パネルをフロート・ドック" title="パネルをフロート・ドック"') : ""}</div></div><div class="studio-panel-content">${studioToolContent()}</div><div class="panel-resize-handle" title="パネル幅を変更"></div></aside><section class="studio-center"><div class="canvas-toolbar"><div>${btn("select-tool", "", "pointer", "icon-button active", 'aria-label="選択ツール"')}${btn("pan-tool", "", "move", "icon-button " + (ui.pan ? "pressed" : ""), 'aria-label="パンツール"')}${btn("undo", "", "undo", "icon-button", 'aria-label="元に戻す"')}${btn("redo", "", "redo", "icon-button", 'aria-label="やり直す"')}</div><span>グラフ ${String(project.charts.indexOf(chart) + 1).padStart(2, "0")} <i> / </i> ${themes.find((t) => t.id === chart.theme)?.name || "Custom"}</span><div>${btn("zoom-out", "−", "", "icon-button", 'aria-label="縮小"')}<button data-action="zoom-reset" class="zoom-value">${ui.zoom}%</button>${btn("zoom-in", "+", "", "icon-button", 'aria-label="拡大"')}${btn("toggle-inspector", "", "settings", "icon-button", 'aria-label="インスペクター切替"')}</div></div><div class="studio-canvas ${ui.pan ? "pan-mode" : ""}" id="studio-canvas"><div class="canvas-ruler horizontal">0 <span>200</span><span>400</span><span>600</span><span>800</span><span>1000</span><span>1200</span></div><div class="canvas-stage" style="transform:translate(${ui.panX}px,${ui.panY}px) scale(${ui.zoom / 100})"><div class="artboard-label"><span>ARTBOARD 01</span><span>1600 × 1000</span></div><div class="graph-artboard" id="graph-artboard">${renderChart(chart, project.sheets, { width: 960, height: 600, interactive: true })}</div></div><span class="canvas-hint">${ui.pan ? "ドラッグでキャンバスを移動" : "点を選択して解析 · ダブルクリックでタイトルを編集"}</span></div>${ui.showData && (window.innerHeight >= 550 || ui.dataExplicit) ? studioData() : ""}</section>${ui.inspector ? studioInspector() : ""}</main>${statusBar()}`;
+    )}</nav><aside class="studio-panel ${ui.floatPanel ? "floating-panel" : ""}" style="${ui.floatPanel ? `left:${ui.panelPos.x}px;top:${ui.panelPos.y}px;` : ""}width:${ui.panelWidth}px"><div class="panel-heading panel-drag-handle"><h2>${toolItems.find((t) => t[0] === ui.tool)?.[2] || "グラフ"}</h2><div>${btn("close-panel", "", "close", "icon-button mobile-panel-close", 'aria-label="パネルを閉じる"')}${ui.pro ? btn("float-panel", "", "expand", "icon-button", 'aria-label="パネルをフロート・ドック" title="パネルをフロート・ドック"') : ""}</div></div><div class="studio-panel-content">${studioToolContent()}</div><div class="panel-resize-handle" title="パネル幅を変更"></div></aside><section class="studio-center"><div class="canvas-toolbar"><div>${btn("select-tool", "", "pointer", "icon-button active", 'aria-label="選択ツール"')}${btn("pan-tool", "", "move", "icon-button " + (ui.pan ? "pressed" : ""), 'aria-label="パンツール"')}${btn("undo", "", "undo", "icon-button", 'aria-label="元に戻す"')}${btn("redo", "", "redo", "icon-button", 'aria-label="やり直す"')}</div><span>グラフ ${String(project.charts.indexOf(chart) + 1).padStart(2, "0")} <i> / </i> ${themes.find((t) => t.id === chart.theme)?.name || "Custom"}</span><div>${btn("zoom-out", "−", "", "icon-button", 'aria-label="縮小"')}<button data-action="zoom-reset" class="zoom-value">${ui.zoom}%</button>${btn("zoom-in", "+", "", "icon-button", 'aria-label="拡大"')}${btn("toggle-inspector", "", "settings", "icon-button", 'aria-label="インスペクター切替"')}</div></div><div class="studio-canvas ${ui.pan ? "pan-mode" : ""}" id="studio-canvas"><div class="canvas-ruler horizontal">0 <span>200</span><span>400</span><span>600</span><span>800</span><span>1000</span><span>1200</span></div><div class="canvas-stage" style="transform:translate(${ui.panX}px,${ui.panY}px) scale(${ui.zoom / 100})"><div class="artboard-label"><span>ARTBOARD 01</span><span>1600 × 1000</span></div><div class="graph-artboard" id="graph-artboard">${renderChart(chart, project.sheets, { width: 960, height: 600, interactive: true })}</div></div><span class="canvas-hint">${ui.pan ? "ドラッグでキャンバスを移動" : "点を選択して解析 · ドラッグで値を編集 · AltでXも編集"}</span></div>${ui.showData && (window.innerHeight >= 550 || ui.dataExplicit) ? studioData() : ""}</section>${ui.inspector ? studioInspector() : ""}</main>${statusBar()}`;
 }
 function studioData() {
   let data = getChartData(currentChart(), project.sheets);
@@ -650,6 +675,7 @@ function baseStudioToolContent() {
         ["horizontal", "Y軸に垂線"],
         ["coordinate", "座標ラベル"],
         ["tangent-data", "差分近似の接線"],
+        ["normal-data", "差分近似の法線"],
       ]
         .map(([t, l]) =>
           btn(
@@ -702,7 +728,9 @@ function baseStudioToolContent() {
 }
 function pointSummary() {
   const points =
-      getChartData(currentChart(), project.sheets).series[0]?.points || [],
+      getChartData(currentChart(), project.sheets).series[
+        ui.selectedSeries || 0
+      ]?.points || [],
     p = points[ui.selectedPoint] || points[0];
   return p
     ? `<div class="point-summary"><span>選択した点 <b>#${ui.selectedPoint + 1}</b></span><strong>(${p.x}, ${p.y})</strong></div>`
@@ -756,12 +784,34 @@ function mathList() {
     horizontal: "Y軸への垂線",
     coordinate: "座標ラベル",
     "tangent-data": "差分接線",
+    smoothed: "平滑化",
+    "fitted-tangent": "実測接線",
+    nonlinear: "非線形回帰",
+    extrema: "極値",
+    intersection: "交点",
+    distance: "距離",
+    slope: "傾き",
+    transform: "関数変換",
+    "derivative-symbolic": "記号微分",
   };
   return (
     (currentChart().math || [])
       .map(
         (m, i) =>
-          `<div class="math-object"><div><span>${esc(names[m.type] || m.type)}</span><code>${esc(m.expression || m.method || "データ連動")}</code>${mathResult(m) != null ? `<small>${esc(mathResult(m))}</small>` : ""}</div>${btn("delete-math", "", "close", "icon-button", `data-index="${i}" aria-label="数学オブジェクトを削除"`)}</div>`,
+          `<div class="math-object"><div><span>${esc(names[m.type] || m.type)}</span><code>${esc(m.expression || m.method || "データ連動")}</code>${mathResult(m) != null ? `<small>${esc(mathResult(m))}</small>` : ""}</div><div class="math-controls">${btn("toggle-math", "", "eye", "icon-button", `data-index="${i}" aria-label="数学オブジェクトの表示を切り替え"`)}${btn("move-math-up", "↑", "", "icon-button", `data-index="${i}" aria-label="数学オブジェクトを前へ"`)}${btn("delete-math", "", "close", "icon-button", `data-index="${i}" aria-label="数学オブジェクトを削除"`)}</div><details class="math-edit"><summary>設定</summary>${[
+            "expression",
+            "x0",
+            "a",
+            "b",
+            "degree",
+            "window",
+          ]
+            .filter((k) => m[k] !== undefined)
+            .map(
+              (k) =>
+                `<label class="field"><span>${esc(k)}</span><input data-math-index="${i}" data-math-key="${k}" type="${k === "expression" ? "text" : "number"}" value="${esc(m[k])}" step="any"></label>`,
+            )
+            .join("")}</details></div>`,
       )
       .join("") || '<p class="panel-note">まだオブジェクトはありません。</p>'
   );
@@ -787,10 +837,20 @@ function studioInspector() {
   let chart = currentChart();
   return `<aside class="studio-inspector"><div class="panel-heading"><h2>プロパティ</h2><span class="tiny-tag">GRAPH</span></div><div class="studio-panel-content"><div class="property-selected">${icon("chart", 20)}<div><strong>グラフ ${String(project.charts.indexOf(chart) + 1).padStart(2, "0")}</strong><span>シートにリンク済み</span></div>${icon("lock", 13)}</div><div class="panel-section"><h3>基本設定</h3>${chartInput("title", "タイトル")}${chartInput("subtitle", "サブタイトル")}</div><div class="panel-section"><h3>座標軸</h3>${chartInput("xLabel", "X軸ラベル")}${chartInput("yLabel", "Y軸ラベル")}</div><div class="panel-section"><h3>線とマーカー</h3>${field("線の太さ", `<div class="range-value"><input aria-label="線の太さ" type="range" min="1" max="6" step="0.2" value="${chart.lineWidth || 3}" data-chart="lineWidth"><span>${chart.lineWidth || 3} px</span></div>`)}${toggle("showPoints", "マーカーを表示")}${field("誤差棒 (± 固定値)", `<input type="number" min="0" step="any" data-chart="errorAmount" value="${chart.errorAmount || 0}">`)}</div><div class="panel-section"><h3>配色</h3>${seriesControls()}</div><div class="panel-section"><h3>出力</h3><div class="dimension-display"><span>W <b>1600</b></span><i>×</i><span>H <b>1000</b></span></div>${btn("export", "エクスポート", "download", "primary full-width")}</div></div></aside>`;
 }
+function renderTool(tool) {
+  const previous = ui.tool;
+  ui.tool = tool;
+  try {
+    return studioToolContent();
+  } finally {
+    ui.tool = previous;
+  }
+}
 function studioToolContent() {
   return baseStudioToolContent() + advancedPanel(ui.tool);
 }
 function render() {
+  ui.renderPassId = (ui.renderPassId || 0) + 1;
   clearTimeout(virtualTimer);
   const oldScroll = $("#grid-scroll"),
     scroll =
@@ -809,6 +869,7 @@ function render() {
     $("#grid-scroll").scrollTop = scroll.y;
   }
   afterAdvancedRender();
+  highlightSelectedData(ui);
   positionFrozenPanes();
   fitCanvas();
   if (ui.editing) {
@@ -887,6 +948,7 @@ function openModal(title, body, wide = false) {
   root.querySelector("input,select,button")?.focus();
 }
 function closeModal() {
+  nativeWorkbookModule?.closeNativeWorkbook();
   $("#modal-root").innerHTML = "";
   ui.modalFocus?.focus();
 }
@@ -908,7 +970,7 @@ function exportModal() {
       )
       .join(
         "",
-      )}</div><div class="export-options"><div class="field-pair">${field("画像の解像度", `<select name="scale"><option value="1">1× 標準</option><option value="2" selected>2× 高解像度</option><option value="3">3× 最高解像度</option></select>`)}${field("出力プリセット", `<select name="preset"><option value="Presentation">Presentation · 1600 × 1000</option><option value="Scientific Paper">Scientific Paper · 1800 × 1200</option><option value="Poster">Poster · 2400 × 3000</option><option value="Social Media">Social Media · 1200 × 1200</option><option value="Print">Print · 2480 × 3508</option><option value="Custom">Custom</option></select>`)}</div><div class="field-pair">${field("幅 (Custom)", `<input name="width" type="number" min="100" max="8000" value="1600">`)}${field("高さ (Custom)", `<input name="height" type="number" min="100" max="8000" value="1000">`)}${field("解像度 DPI", `<select name="dpi"><option>96</option><option>150</option><option>300</option></select>`)}${field("余白 (px)", `<input name="margin" type="number" min="20" max="300" placeholder="テーマに従う">`)}${field("フォント", `<select name="fontFamily"><option value="">テーマに従う</option><option value="sans-serif">Sans Serif</option><option value="serif">Serif</option><option value="monospace">Monospace</option></select>`)}${field("カラープロファイル", `<select name="profile"><option value="srgb">sRGB</option><option value="gray">Grayscale (sRGB)</option></select>`)}</div><label class="checkbox-row"><input type="checkbox" name="transparent">背景を透明にする（SVG / PNG）</label></div><p class="panel-note">PDF は文字をベクター化して出力します。Excel の基本グラフ・数式・複数シートに対応します。完全な復元には Plot 形式を使用してください。</p><div class="modal-footer">${btn("close-modal", "キャンセル", "", "secondary")}<button class="primary" type="submit">${icon("download")}ダウンロード</button></div></form>`,
+      )}</div><div class="export-options"><div class="field-pair">${field("画像の解像度", `<select name="scale"><option value="1">1× 標準</option><option value="2" selected>2× 高解像度</option><option value="3">3× 最高解像度</option></select>`)}${field("出力プリセット", `<select name="preset"><option value="Presentation">Presentation · 1600 × 1000</option><option value="Scientific Paper">Scientific Paper · 1800 × 1200</option><option value="Poster">Poster · 2400 × 3000</option><option value="Social Media">Social Media · 1200 × 1200</option><option value="Print">Print · 2480 × 3508</option><option value="Custom">Custom</option></select>`)}</div><div class="field-pair">${field("幅 (Custom)", `<input name="width" type="number" min="320" max="8000" value="1600">`)}${field("高さ (Custom)", `<input name="height" type="number" min="240" max="8000" value="1000">`)}${field("解像度 DPI", `<select name="dpi"><option>96</option><option>150</option><option>300</option></select>`)}${field("余白 (px)", `<input name="margin" type="number" min="20" max="300" placeholder="テーマに従う">`)}${field("フォント", `<select name="fontFamily"><option value="">テーマに従う</option><option value="sans-serif">Sans Serif</option><option value="serif">Serif</option><option value="monospace">Monospace</option></select>`)}${field("カラープロファイル", `<select name="profile"><option value="srgb">sRGB</option><option value="gray">Grayscale (sRGB)</option><option value="cmyk">Device CMYK (PDF)</option><option value="icc">ICC管理 (PDF)</option></select>`)}</div>${field("ICCプロファイル（ICC管理で使用）", `<input type="file" name="icc" accept=".icc,.icm">`)}<label class="checkbox-row"><input type="checkbox" name="transparent">背景を透明にする（SVG / PNG）</label></div><p class="panel-note">PDF は文字をベクター化して出力します。Excel の基本グラフ・数式・複数シートに対応します。完全な復元には Plot 形式を使用してください。</p><div class="modal-footer">${btn("close-modal", "キャンセル", "", "secondary")}<button class="primary" type="submit">${icon("download")}ダウンロード</button></div></form>`,
     true,
   );
 }
@@ -935,6 +997,8 @@ async function doExport(form) {
     return;
   }
   try {
+    if (["cmyk", "icc"].includes(data.get("profile")) && format !== "pdf")
+      throw Error("CMYK・ICC管理はPDF形式で選択してください。");
     if (format === "plot") {
       download(
         stringifyProject({ ...project, editHistory: ui.historyLabels }),
@@ -970,12 +1034,14 @@ async function doExport(form) {
         ],
       }[data.get("preset")] || [1600, 1000];
       if (
-        outWidth < 100 ||
-        outHeight < 100 ||
+        outWidth < 320 ||
+        outHeight < 240 ||
         outWidth > 8000 ||
         outHeight > 8000
       )
-        throw Error("出力寸法は100〜8000pxで指定してください。");
+        throw Error(
+          "出力寸法は幅320〜8000px、高さ240〜8000pxで指定してください。",
+        );
       let svg = renderChart(
         {
           ...chart,
@@ -1035,7 +1101,21 @@ async function doExport(form) {
           }, "image/png"),
         );
       }
-      if (format === "pdf") await exportPDF(svg, outWidth, outHeight, name);
+      if (["cmyk", "icc"].includes(data.get("profile")) && format !== "pdf")
+        throw Error("CMYK・ICC管理はPDF形式で選択してください。");
+      if (format === "pdf") {
+        const file = data.get("icc");
+        if (data.get("profile") === "icc" && (!file || file.size === 0))
+          throw Error("ICCプロファイルを選択してください。");
+        if (file?.size > 16 * 1024 * 1024)
+          throw Error("ICCプロファイルは16MB以下で指定してください。");
+        await exportPDF(svg, outWidth, outHeight, name, {
+          cmyk: data.get("profile") === "cmyk",
+          ...(data.get("profile") === "icc"
+            ? { icc: new Uint8Array(await file.arrayBuffer()) }
+            : {}),
+        });
+      }
     }
     closeModal();
     notify(
@@ -1293,6 +1373,25 @@ function helpDialog() {
   );
 }
 const actions = {
+  "recover-project": () => {
+    const data = localStorage.getItem("plot-project-v1-recovery");
+    if (data) download(data, "recovery.plot.json", "application/json");
+  },
+  "native-workbook": async () => {
+    try {
+      nativeWorkbookModule ??= await import("./native-workbook.js");
+      await nativeWorkbookModule.openNativeWorkbook({
+        getProject: () => project,
+        ui,
+        change,
+        openModal,
+        closeModal,
+        notify,
+      });
+    } catch (err) {
+      notify(err.message);
+    }
+  },
   "view-sheet": () => {
     ui.view = "sheet";
     ui.menu = null;
@@ -1645,6 +1744,7 @@ const actions = {
         panelWidth: ui.panelWidth,
         zoom: ui.zoom,
         layout: ui.layout || {},
+        extraPanels: ui.extraPanels || [],
       };
     }),
   "load-workspace": () => {
@@ -1683,22 +1783,33 @@ const actions = {
     }),
   geometry: (el) => {
     const type = el.dataset.geometry,
-      p = getChartData(currentChart(), project.sheets).series[0]?.points[
-        ui.selectedPoint
-      ];
+      p = getChartData(currentChart(), project.sheets).series[
+        ui.selectedSeries || 0
+      ]?.points[ui.selectedPoint];
     if (!p) return notify("データ点を選択してください。");
     change("数学オブジェクトを追加", () => {
       currentChart().math ||= [];
       currentChart().math.push({
         id: uid(),
-        type,
+        type: type === "normal-data" ? "normal" : type,
         pointIndex: ui.selectedPoint,
-        series: 0,
+        series: ui.selectedSeries || 0,
         x0: p.x,
         method: type === "tangent-data" ? "隣接点差分" : undefined,
       });
     });
   },
+  "toggle-math": (el) =>
+    change("数学オブジェクトの表示を変更", () => {
+      const m = currentChart().math[Number(el.dataset.index)];
+      m.hidden = !m.hidden;
+    }),
+  "move-math-up": (el) =>
+    change("数学オブジェクトの順序を変更", () => {
+      const i = Number(el.dataset.index),
+        list = currentChart().math;
+      if (i < list.length - 1) [list[i], list[i + 1]] = [list[i + 1], list[i]];
+    }),
   "delete-math": (el) =>
     change("数学オブジェクトを削除", () =>
       currentChart().math.splice(Number(el.dataset.index), 1),
@@ -1812,6 +1923,13 @@ document.addEventListener("dblclick", (e) => {
 document.addEventListener("change", (e) => {
   const el = e.target;
   try {
+    if (el.dataset.mathIndex !== undefined) {
+      change("数学オブジェクトを編集", () => {
+        currentChart().math[Number(el.dataset.mathIndex)][el.dataset.mathKey] =
+          el.type === "number" ? Number(el.value) : el.value;
+      });
+      return;
+    }
     if (el.dataset.chart) {
       let key = el.dataset.chart,
         v =
@@ -2343,6 +2461,12 @@ installSheetTools({
   notify,
   selectedRange,
 });
+initializeCanvasEditing({
+  getProject: () => project,
+  ui,
+  currentChart,
+  change,
+});
 initializeAdvanced({
   getProject: () => project,
   ui,
@@ -2357,6 +2481,7 @@ initializeAdvanced({
   download,
   fitCanvas,
   validate: stringifyProject,
+  renderTool,
 });
 render();
 
@@ -2372,6 +2497,10 @@ function fitCanvas() {
     stage.style.minWidth = "0";
   }
 }
+if (startupRecovery)
+  notify(
+    "前回の保存データを読み込めませんでした。元データは保持しています。ファイルメニューから書き出せます。",
+  );
 const canvasObserver = new ResizeObserver(fitCanvas);
 canvasObserver.observe($("#app"));
 let resizeTimer;

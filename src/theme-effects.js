@@ -5,7 +5,7 @@ export function themeEffects(svg, chart) {
     style =
       chart.themeTokens?.style || extraThemes.find((t) => t.id === name)?.style;
   let defs = "";
-  if (/gradient|aurora|glass/.test(name)) {
+  if (!chart.transparent && /gradient|aurora|glass/.test(name)) {
     defs += `<linearGradient id="theme-bg-${id}" x2="1" y2="1"><stop stop-color="${chart.background || (/aurora/.test(name) ? "#1c1c22" : "#edf0f8")}"/><stop offset="1" stop-color="${/aurora/.test(name) ? "#3b315b" : "#f5e9f0"}"/></linearGradient>`;
     svg = svg.replace(
       /(<rect\b[^>]*)(fill="[^\"]*")/,

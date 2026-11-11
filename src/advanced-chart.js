@@ -42,6 +42,12 @@ export function prepareChart(original, sheets, getData) {
       const points = data.series[m.series || 0]?.points || source,
         a = Number(m.a ?? chart.xMin ?? 0),
         b = Number(m.b ?? chart.xMax ?? 10);
+      if (
+        ["normal", "tangent"].includes(m.type) &&
+        !m.expression &&
+        m.pointIndex != null
+      )
+        return [{ ...m, x0: points[m.pointIndex]?.x ?? m.x0 }];
       if (m.type === "integral" && m.method === "analytic") {
         return [
           {

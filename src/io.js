@@ -271,8 +271,8 @@ function validateSheets(sheets) {
         throw new Error("読み込めるセル数を超えています。");
     }
     for (const [key, maxIndex, min, max] of [
-      ["columnWidths", 16383, 45, 500],
-      ["rowHeights", 1048575, 22, 500],
+      ["columnWidths", 16383, 20, 2000],
+      ["rowHeights", 1048575, 20, 2000],
     ])
       if (sheet[key] !== undefined) {
         if (
@@ -379,8 +379,54 @@ function validateVisual(object) {
 
 function validateWorkspace(workspace) {
   if (!isRecord(workspace)) throw new Error("ワークスペース情報が不正です。");
+  if (
+    workspace.extraPanels !== undefined &&
+    (!Array.isArray(workspace.extraPanels) ||
+      workspace.extraPanels.length > 24 ||
+      workspace.extraPanels.some(
+        (p) =>
+          !isRecord(p) ||
+          !safeId(p.id) ||
+          typeof p.title !== "string" ||
+          p.title.length > 100 ||
+          ![
+            "chart",
+            "data",
+            "math",
+            "geometry",
+            "appearance",
+            "typography",
+            "layers",
+            "axes",
+            "analysis",
+            "history",
+            "settings",
+          ].includes(p.tool),
+      ))
+  )
+    throw Error("独立パネルの情報が不正です。");
   if (workspace.layout) {
-    const keys = ["tools", "properties", "data"];
+    const keys = [
+      "tools",
+      "properties",
+      "data",
+      ...(workspace.extraPanels || []).map((p) => p.id),
+    ];
+    if (new Set(keys).size !== keys.length)
+      throw Error("パネルIDが重複しています。");
+    for (const key of keys) {
+      const seen = new Set();
+      let next = key;
+      while (
+        typeof workspace.layout[next] === "string" &&
+        workspace.layout[next].startsWith("split:")
+      ) {
+        if (seen.has(next)) throw Error("パネルの循環配置は保存できません。");
+        seen.add(next);
+        next = workspace.layout[next].split(":")[1];
+      }
+    }
+
     if (!isRecord(workspace.layout)) throw Error("パネル配置が不正です。");
     for (const [k, v] of Object.entries(workspace.layout)) {
       if (keys.includes(k)) {
@@ -395,7 +441,12 @@ function validateWorkspace(workspace) {
             "hidden",
             "max",
           ].includes(v) &&
-          !/^split:(?:tools|properties|data):(?:left|right|top|bottom)$/.test(v)
+          !(
+            typeof v === "string" &&
+            v.startsWith("split:") &&
+            keys.includes(v.split(":")[1]) &&
+            ["left", "right", "top", "bottom"].includes(v.split(":")[2])
+          )
         )
           throw Error("パネル位置が不正です。");
       } else if (keys.some((key) => k === key + "Position")) {
@@ -418,6 +469,7 @@ function validateWorkspace(workspace) {
     "panelWidth",
     "zoom",
     "layout",
+    "extraPanels",
   ];
   if (Object.keys(workspace).some((key) => !keys.includes(key)))
     throw new Error("ワークスペースに不明な設定があります。");
@@ -892,15 +944,154 @@ function shiftSharedFormula(formula, dr, dc) {
   );
 }
 
-function readStyles(xml) {
+export function readStyles(xml, themeXML = "") {
   if (!xml) return [];
   const section = (name) =>
     xml.match(new RegExp(`<${name}\\b[^>]*>([\\s\\S]*?)<\\/${name}>`))?.[1] ||
     "";
+  const themeNames = [
+    "lt1",
+    "dk1",
+    "lt2",
+    "dk2",
+    "accent1",
+    "accent2",
+    "accent3",
+    "accent4",
+    "accent5",
+    "accent6",
+    "hlink",
+    "folHlink",
+  ];
+  const theme = themeNames.map((name) => {
+    const body =
+      themeXML.match(
+        new RegExp(
+          "<(?:\\w+:)?" +
+            name +
+            "\\b[^>]*>([\\s\\S]*?)</(?:\\w+:)?" +
+            name +
+            ">",
+        ),
+      )?.[1] || "";
+    return body.match(/\b(?:lastClr|val)="([A-Fa-f0-9]{6})"/)?.[1];
+  });
+  const indexed = [
+    "000000",
+    "FFFFFF",
+    "FF0000",
+    "00FF00",
+    "0000FF",
+    "FFFF00",
+    "FF00FF",
+    "00FFFF",
+    "000000",
+    "FFFFFF",
+    "FF0000",
+    "00FF00",
+    "0000FF",
+    "FFFF00",
+    "FF00FF",
+    "00FFFF",
+    "800000",
+    "008000",
+    "000080",
+    "808000",
+    "800080",
+    "008080",
+    "C0C0C0",
+    "808080",
+    "9999FF",
+    "993366",
+    "FFFFCC",
+    "CCFFFF",
+    "660066",
+    "FF8080",
+    "0066CC",
+    "CCCCFF",
+    "000080",
+    "FF00FF",
+    "FFFF00",
+    "00FFFF",
+    "800080",
+    "800000",
+    "008080",
+    "0000FF",
+    "00CCFF",
+    "CCFFFF",
+    "CCFFCC",
+    "FFFF99",
+    "99CCFF",
+    "FF99CC",
+    "CC99FF",
+    "FFCC99",
+    "3366FF",
+    "33CCCC",
+    "99CC00",
+    "FFCC00",
+    "FF9900",
+    "FF6600",
+    "666699",
+    "969696",
+    "003366",
+    "339966",
+    "003300",
+    "333300",
+    "993300",
+    "993366",
+    "333399",
+    "333333",
+  ];
+  const colorValue = (a) => {
+    let hex =
+      a.rgb?.slice(-6) || theme[Number(a.theme)] || indexed[Number(a.indexed)];
+    if (!hex) return undefined;
+    let rgb = [0, 2, 4].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
+    if (a.tint) {
+      const t = Number(a.tint),
+        max = Math.max(...rgb),
+        min = Math.min(...rgb),
+        d = max - min,
+        l = (max + min) / 2,
+        s = d === 0 ? 0 : d / (1 - Math.abs(2 * l - 1));
+      let h = 0;
+      if (d)
+        h =
+          max === rgb[0]
+            ? ((rgb[1] - rgb[2]) / d) % 6
+            : max === rgb[1]
+              ? (rgb[2] - rgb[0]) / d + 2
+              : (rgb[0] - rgb[1]) / d + 4;
+      h = (h / 6 + 1) % 1;
+      const nl = t < 0 ? l * (1 + t) : l * (1 - t) + t,
+        c = (1 - Math.abs(2 * nl - 1)) * s,
+        x = c * (1 - Math.abs(((h * 6) % 2) - 1)),
+        m = nl - c / 2;
+      const n = Math.floor(h * 6) % 6;
+      rgb = [
+        [c, x, 0],
+        [x, c, 0],
+        [0, c, x],
+        [0, x, c],
+        [x, 0, c],
+        [c, 0, x],
+      ][n].map((v) => v + m);
+    }
+    return rgb
+      .map((v) =>
+        Math.round(v * 255)
+          .toString(16)
+          .padStart(2, "0"),
+      )
+      .join("")
+      .toUpperCase();
+  };
   const fonts = [
     ...section("fonts").matchAll(/<font\b[^>]*>([\s\S]*?)<\/font>/g),
   ].map((m) => {
-    const color = attrs(m[1].match(/<color\b([^>]*)\/?\s*>/)?.[1] || "").rgb;
+    const color = colorValue(
+      attrs(m[1].match(/<color\b([^>]*)\/?\s*>/)?.[1] || ""),
+    );
     return {
       ...(/<b(?:\s|\/>|>)/.test(m[1])
         ? { bold: !/<b\s+val="0"/.test(m[1]) }
@@ -916,7 +1107,9 @@ function readStyles(xml) {
   const fills = [
     ...section("fills").matchAll(/<fill\b[^>]*>([\s\S]*?)<\/fill>/g),
   ].map((m) => {
-    const color = attrs(m[1].match(/<fgColor\b([^>]*)\/?\s*>/)?.[1] || "").rgb;
+    const color = colorValue(
+      attrs(m[1].match(/<fgColor\b([^>]*)\/?\s*>/)?.[1] || ""),
+    );
     return color ? { bg: `#${color.slice(-6)}` } : {};
   });
   const builtin = {
@@ -996,7 +1189,15 @@ export async function readXlsx(input) {
       /<(?:\w+:)?si\b[^>]*>([\s\S]*?)<\/(?:\w+:)?si>/g,
     ),
   ].map((m) => textRuns(m[1]));
-  const styles = readStyles(files.get("xl/styles.xml"));
+  const themeRel = [...relationships.values()].find((r) =>
+    r.Type?.endsWith("/theme"),
+  );
+  const styles = readStyles(
+    files.get("xl/styles.xml"),
+    files.get(
+      themeRel ? normalizePath("xl", themeRel.Target) : "xl/theme/theme1.xml",
+    ) || "",
+  );
   const sheets = [];
   let count = 0;
   for (const match of workbook.matchAll(/<(?:\w+:)?sheet\b([^>]*?)\/?\s*>/g)) {
@@ -1278,6 +1479,16 @@ function validateAdvancedChart(chart) {
     "xColumn",
   ])
     optionalText(chart, k, 4000);
+  if (chart.errorRange) {
+    if (
+      typeof chart.errorRange !== "string" ||
+      chart.errorRange
+        .split(":")
+        .map(parseRef)
+        .some((p) => !p || p.row < 0 || p.col < 0)
+    )
+      throw Error("誤差のセル範囲が不正です。");
+  }
   if (chart.parameters) {
     if (
       !isRecord(chart.parameters) ||
@@ -1313,10 +1524,18 @@ function validateAdvancedChart(chart) {
           "polygon",
           "bezier",
           "compound",
+          "path",
         ].includes(o.type)
       )
         throw Error("図形が不正です。");
       ids.add(o.id);
+      if (
+        o.type === "path" &&
+        (typeof o.pathData !== "string" ||
+          o.pathData.length > 300000 ||
+          !/^[MmLlHhVvCcSsQqTtAaZz0-9eE+.,\s-]+$/.test(o.pathData))
+      )
+        throw Error("SVGパスが不正です。");
       for (const k of [
         "x",
         "y",
@@ -1334,7 +1553,7 @@ function validateAdvancedChart(chart) {
         "c2y",
       ])
         optionalNumber(o, k, -100000, 100000);
-      for (const k of ["fill", "stroke", "color"])
+      for (const k of ["fill", "stroke", "color", "background"])
         if (o[k] !== undefined && o[k] !== "none" && !safeColor(o[k]))
           throw Error("図形の色が不正です。");
       if (o.fontFamily && !safeFont(o.fontFamily))

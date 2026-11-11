@@ -1,3 +1,5 @@
+import { colorTransform, applyPDFColor } from "./color-management.js";
+import { vectorArea } from "./vector-geometry.js";
 import {
   expression,
   symbolic,
@@ -26,6 +28,19 @@ import {
 } from "./engine.js";
 import { jsPDF } from "jspdf";
 import "svg2pdf.js";
+const panelTitles = {
+  chart: "グラフ",
+  data: "データ",
+  math: "数学",
+  geometry: "図形",
+  appearance: "テーマ",
+  typography: "文字",
+  layers: "レイヤー",
+  axes: "座標軸",
+  analysis: "解析",
+  history: "履歴",
+  settings: "設定",
+};
 let C;
 let panelObservers = [];
 const $ = (s) => document.querySelector(s),
@@ -450,11 +465,18 @@ export function advancedPanel(tool) {
 }
 function panelSettings() {
   return (
-    ["tools", "properties", "data"]
+    [
+      "tools",
+      "properties",
+      "data",
+      ...(C.ui.extraPanels || []).map((p) => p.id),
+    ]
       .map((k) =>
         select(
           "layout-" + k,
-          { tools: "編集パネル", properties: "プロパティ", data: "データ" }[k],
+          { tools: "編集パネル", properties: "プロパティ", data: "データ" }[
+            k
+          ] || C.ui.extraPanels?.find((p) => p.id === k)?.title,
           [
             ["left", "左にドック"],
             ["right", "右にドック"],
@@ -466,10 +488,16 @@ function panelSettings() {
             ["max", "最大化"],
           ],
           C.ui.layout?.[k] ||
-            { tools: "left", properties: "right", data: "bottom" }[k],
+            { tools: "left", properties: "right", data: "bottom" }[k] ||
+            "float",
         ),
       )
       .join("") +
+    form(
+      "panel-add",
+      select("tool", "追加するパネル", Object.entries(panelTitles), "math"),
+      "独立パネルを追加",
+    ) +
     button("layout-save", "配置を保存") +
     button("layout-restore", "配置を復元")
   );
@@ -511,6 +539,8 @@ function objectProperties() {
       ) +
       input("stroke", "線", o.stroke || "#555555", "color") +
       input("color", "文字色", o.color || "#333333", "color") +
+      input("background", "文字の背景", o.background || "#ffffff", "color") +
+      `<label class="checkbox-row"><input type="checkbox" name="textBackground" ${o.textBackground ? "checked" : ""}>文字の背景を表示</label><label class="checkbox-row"><input type="checkbox" name="bold" ${o.bold ? "checked" : ""}>太字</label><label class="checkbox-row"><input type="checkbox" name="italic" ${o.italic ? "checked" : ""}>斜体</label>` +
       select(
         "fontFamily",
         "フォント",
@@ -521,6 +551,8 @@ function objectProperties() {
         ],
         o.fontFamily,
       ) +
+      `<label class="checkbox-row"><input type="checkbox" name="closed" ${o.closed ? "checked" : ""}>閉じたパス</label>` +
+      input("pathData", "SVG パス", o.pathData || "") +
       input(
         "points",
         "多角形の頂点 (x,y; …)",
@@ -537,7 +569,7 @@ function objectProperties() {
     "更新",
   );
 }
-export async function exportPDF(svg, width, height, name) {
+export async function exportPDF(svg, width, height, name, colorOptions = {}) {
   const node = new DOMParser().parseFromString(
     svg,
     "image/svg+xml",
@@ -552,8 +584,15 @@ export async function exportPDF(svg, width, height, name) {
       format: [width, height],
       hotfixes: ["px_scaling"],
     });
-    await pdf.svg(node, { x: 0, y: 0, width, height });
-    pdf.save(name + ".pdf");
+    let transform;
+    if (colorOptions.icc) transform = await colorTransform(colorOptions.icc);
+    try {
+      if (transform || colorOptions.cmyk) applyPDFColor(pdf, transform);
+      await pdf.svg(node, { x: 0, y: 0, width, height });
+      pdf.save(name + ".pdf");
+    } finally {
+      transform?.close();
+    }
   } finally {
     node.remove();
   }
@@ -561,6 +600,7 @@ export async function exportPDF(svg, width, height, name) {
 export function initializeAdvanced(context) {
   C = context;
   C.ui.layout = project().workspace?.layout || {};
+  C.ui.extraPanels = project().workspace?.extraPanels || [];
   C.ui.objectIds = [];
   C.ui.snap = true;
   document.addEventListener("click", onClick, true);
@@ -677,41 +717,20 @@ function onClick(e) {
     }
     if (a === "area") {
       const chosen = chart().objects?.filter((o) => ids().includes(o.id)) || [],
-        area = chosen.reduce(
-          (sum, o) =>
-            sum +
-            (o.type === "ellipse"
-              ? (Math.PI * o.width * o.height) / 4
-              : o.type === "polygon"
-                ? polygonArea(
-                    o.points.map(([x, y]) => ({
-                      x: (x * o.width) / 100,
-                      y: (y * o.height) / 100,
-                    })),
-                  )
-                : o.type === "compound"
-                  ? (o.rings || []).reduce(
-                      (s, r, i) =>
-                        s +
-                        (i ? -1 : 1) *
-                          polygonArea(r.map(([x, y]) => ({ x, y }))),
-                      0,
-                    )
-                  : ["line", "arrow", "bezier", "text", "latex"].includes(
-                        o.type,
-                      )
-                    ? 0
-                    : o.width * o.height),
-          0,
-        );
+        area = chosen.reduce((sum, o) => sum + vectorArea(o), 0);
       C.openModal(
         "幾何学的面積",
-        `<p>${area.toPrecision(8)} %²（キャンバス座標）</p><p>楕円: πab、長方形: 幅×高さ、多角形: 靴紐公式。</p>`,
+        `<p>${area.toPrecision(8)} %²（キャンバス座標）</p><p>楕円: πab、長方形: 幅×高さ、多角形: 靴紐公式、閉じたベジェ: 曲線積分。</p>`,
       );
       return;
     }
     if (a === "residuals") {
       showResiduals();
+      return;
+    }
+    if (a === "close-extra-panel") {
+      C.ui.layout[el.dataset.panel] = "hidden";
+      C.render();
       return;
     }
     if (a === "layout-save") {
@@ -721,12 +740,16 @@ function onClick(e) {
           (project().workspace = {
             ...project().workspace,
             layout: structuredClone(C.ui.layout),
+            extraPanels: structuredClone(C.ui.extraPanels || []),
           }),
       );
       return;
     }
     if (a === "layout-restore") {
       C.ui.layout = structuredClone(project().workspace?.layout || {});
+      C.ui.extraPanels = structuredClone(
+        project().workspace?.extraPanels || [],
+      );
       C.render();
       return;
     }
@@ -877,6 +900,23 @@ function onSubmit(e) {
   const d = new FormData(f),
     kind = f.dataset.advForm;
   try {
+    if (kind === "panel-add") {
+      const tool = d.get("tool");
+      if (!panelTitles[tool]) throw Error("パネルが不正です。");
+      if ((C.ui.extraPanels || []).length >= 24)
+        throw Error("独立パネルは24個までです。");
+      const id = "pane-" + crypto.randomUUID();
+      C.ui.extraPanels ??= [];
+      C.ui.extraPanels.push({ id, tool, title: panelTitles[tool] });
+      C.ui.layout[id] = "float";
+      C.ui.layout[id + "Position"] = {
+        x: 100 + C.ui.extraPanels.length * 20,
+        y: 100,
+        width: 290,
+        height: 400,
+      };
+      C.render();
+    }
     if (kind === "curve") {
       const type = d.get("type"),
         model = {
@@ -1090,6 +1130,12 @@ function onSubmit(e) {
             "c2y",
           ])
             o[k] = num(d, k);
+          o.bold = d.has("bold");
+          o.italic = d.has("italic");
+          o.textBackground = d.has("textBackground");
+          o.background = d.get("background");
+          o.closed = d.has("closed");
+          if (o.type === "path") o.pathData = d.get("pathData");
           o.points = d
             .get("points")
             .split(";")
@@ -1199,6 +1245,43 @@ function showResiduals() {
   );
 }
 function objectPointerDown(e) {
+  const annotation = e.target.closest("#graph-artboard [data-annotation-id]");
+  if (annotation && e.button === 0) {
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    const model = chart().annotations.find(
+        (a) => a.id === annotation.dataset.annotationId,
+      ),
+      svg = annotation.closest("svg"),
+      start = svg.createSVGPoint();
+    start.x = e.clientX;
+    start.y = e.clientY;
+    const at = start.matrixTransform(svg.getScreenCTM().inverse());
+    let dx = 0,
+      dy = 0;
+    const move = (ev) => {
+      const p = svg.createSVGPoint();
+      p.x = ev.clientX;
+      p.y = ev.clientY;
+      const next = p.matrixTransform(svg.getScreenCTM().inverse());
+      dx = next.x - at.x;
+      dy = next.y - at.y;
+      annotation.style.transform = `translate(${dx}px,${dy}px)`;
+    };
+    const up = () => {
+      document.removeEventListener("pointermove", move);
+      if (Math.abs(dx) + Math.abs(dy) > 1)
+        C.change("注釈を移動", () => {
+          const pct = model.coordinateMode === "percent";
+          model.x += pct ? (dx / svg.viewBox.baseVal.width) * 100 : dx;
+          model.y += pct ? (dy / svg.viewBox.baseVal.height) * 100 : dy;
+        });
+    };
+    document.addEventListener("pointermove", move);
+    document.addEventListener("pointerup", up, { once: true });
+    return;
+  }
+
   const el = e.target.closest("#graph-artboard [data-object-id]");
   if (!el || e.button !== 0) return;
   e.preventDefault();
@@ -1299,12 +1382,21 @@ export function afterAdvancedRender() {
     properties: $(".studio-inspector"),
     data: $(".studio-data"),
   };
+  if (C.ui.pro)
+    for (const p of C.ui.extraPanels || []) {
+      const node = document.createElement("aside");
+      node.className = "auxiliary-panel";
+      node.innerHTML = `<div class="panel-heading"><h2>${esc(p.title)}</h2>${button("close-extra-panel", "×", `data-panel="${p.id}" aria-label="パネルを隠す"`)}</div><div class="studio-panel-content">${C.renderTool(p.tool)}</div>`;
+      work.append(node);
+      panels[p.id] = node;
+    }
   let tabButtons = "";
   for (const [k, node] of Object.entries(panels)) {
     if (!node) continue;
     const mode =
       C.ui.layout?.[k] ||
-      { tools: "left", properties: "right", data: "bottom" }[k];
+      { tools: "left", properties: "right", data: "bottom" }[k] ||
+      "float";
     node.dataset.panelKey = k;
     node.classList.add("managed-panel");
     let title = node.querySelector(".panel-heading,.data-panel-top");
@@ -1316,7 +1408,8 @@ export function afterAdvancedRender() {
       title.ondblclick = () => {
         C.ui.layout[k] =
           mode === "max"
-            ? { tools: "left", properties: "right", data: "bottom" }[k]
+            ? { tools: "left", properties: "right", data: "bottom" }[k] ||
+              "float"
             : "max";
         C.render();
       };
@@ -1375,7 +1468,8 @@ export function afterAdvancedRender() {
       node.style.display = active === k ? "flex" : "none";
       tabButtons += button(
         "panel-tab",
-        { tools: "編集", properties: "属性", data: "データ" }[k],
+        { tools: "編集", properties: "属性", data: "データ" }[k] ||
+          C.ui.extraPanels?.find((p) => p.id === k)?.title,
         `data-panel="${k}"`,
       );
       continue;
@@ -1443,6 +1537,7 @@ export function afterAdvancedRender() {
   };
   work.ondrop = (e) => {
     const key = e.dataTransfer.getData("text/plot-panel");
+    const previousLayout = structuredClone(C.ui.layout);
     if (!key) return;
     e.preventDefault();
     const b = work.getBoundingClientRect(),
@@ -1480,6 +1575,20 @@ export function afterAdvancedRender() {
               : ry > 0.75
                 ? "bottom"
                 : "tab";
+    try {
+      C.validate({
+        ...project(),
+        workspace: {
+          ...project().workspace,
+          layout: C.ui.layout,
+          extraPanels: C.ui.extraPanels || [],
+        },
+      });
+    } catch (error) {
+      C.ui.layout = previousLayout;
+      C.notify(error.message);
+      return;
+    }
     C.render();
   };
 }

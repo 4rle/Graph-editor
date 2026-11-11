@@ -980,6 +980,17 @@
 .studio-shell .save-state {
   color: #999;
 }
+.studio-shell .panel-heading button,
+.studio-shell .checkbox-row,
+.studio-shell .grid-pages {
+  color: #aaa;
+}
+.studio-shell input[type="color"] {
+  border-color: #555;
+}
+.studio-active .modal .icon-button {
+  color: #aaa;
+}
 .studio-shell .panel-note {
   color: #aaa;
 }
@@ -1369,4 +1380,90 @@
   right: auto !important;
   bottom: auto !important;
 }
-.studio-active .modal .field,.studio-active .modal .field>span,.studio-active .modal .section-label,.studio-active .modal .export-format span{color:#aaa}.studio-active input::placeholder{color:#888}
+.studio-active .modal .field,
+.studio-active .modal .field > span,
+.studio-active .modal .section-label,
+.studio-active .modal .export-format span {
+  color: #aaa;
+}
+.studio-active input::placeholder {
+  color: #888;
+}
+.native-modal {
+  width: calc(100vw - 24px) !important;
+  max-height: calc(100dvh - 24px) !important;
+  height: calc(100dvh - 24px);
+}
+.native-modal .modal-content {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  padding: 8px;
+}
+.native-modal .modal-header {
+  padding: 10px 16px;
+}
+.native-modal .modal-header h2 {
+  font-size: 14px;
+}
+.native-workbook {
+  position: relative;
+  flex: 1;
+  min-height: 200px;
+  color: #333;
+  background: #fff;
+}
+.native-modal .modal-footer {
+  margin-top: 8px;
+}
+.native-modal .fortune-sheet-container {
+  height: 100%;
+  width: 100%;
+}
+.auxiliary-panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 190px;
+  width: 290px;
+  min-height: 0;
+  background: #2a2a2a;
+  border: 1px solid #555;
+  overflow: hidden;
+  resize: horizontal;
+}
+.auxiliary-panel .panel-heading {
+  height: 38px;
+  background: #333;
+  flex-shrink: 0;
+  cursor: move;
+}
+.auxiliary-panel .panel-heading button {
+  padding: 3px 8px;
+}
+.auxiliary-panel .studio-panel-content {
+  flex: 1;
+  overflow: auto;
+}
+.selected-data-point {
+  stroke: #777 !important;
+  stroke-width: 3px !important;
+}
+.math-object {
+  flex-wrap: wrap;
+}
+.math-controls {
+  display: flex;
+  align-items: center;
+}
+.math-edit {
+  flex-basis: 100%;
+  font-size: 10px;
+  color: #bbb;
+}
+.math-edit summary {
+  cursor: pointer;
+}
+.math-edit .field {
+  margin: 7px 0;
+}
